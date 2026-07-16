@@ -1,10 +1,9 @@
 -- Initial schema for the weather station project.
--- Target: PostgreSQL (with optional TimescaleDB extension for hypertables).
--- Safe to run on plain Postgres too — the CREATE EXTENSION / hypertable
--- calls are the only Timescale-specific parts and are clearly marked.
+-- Target: plain PostgreSQL (e.g. Amazon RDS for PostgreSQL, which does not
+-- support the TimescaleDB extension). If this ever moves to Timescale Cloud
+-- instead, uncomment the two Timescale-specific lines marked below.
 
--- Enable TimescaleDB if available (no-op / comment out on plain Postgres).
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 CREATE TABLE IF NOT EXISTS stations (
     id          SERIAL PRIMARY KEY,
@@ -23,14 +22,14 @@ CREATE TABLE IF NOT EXISTS readings (
     pressure_hpa    DOUBLE PRECISION,
     wind_speed_ms   DOUBLE PRECISION,
     wind_dir_deg    DOUBLE PRECISION,
-    rain_mm         DOUBLE PRECISION,
-    uv_index        DOUBLE PRECISION,
+    noise_db        DOUBLE PRECISION,
+    pm2_5_ugm3      DOUBLE PRECISION,
+    pm10_ugm3       DOUBLE PRECISION,
     PRIMARY KEY (station_id, time)
 );
 
--- Turns `readings` into a TimescaleDB hypertable partitioned by time.
--- Skip this call (and the extension above) if you chose plain Postgres.
-SELECT create_hypertable('readings', 'time', if_not_exists => TRUE);
+-- Timescale-only: turns `readings` into a hypertable partitioned by time.
+-- SELECT create_hypertable('readings', 'time', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_readings_station_time
     ON readings (station_id, time DESC);
