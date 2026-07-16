@@ -72,7 +72,7 @@ STATION_INFO_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-INTENTS = ("greeting", "station_info", "data_question")
+INTENTS = ("greeting", "station_info", "data_question", "unclear")
 
 STYLE_RULE = "Do not use emojis. Do not use em dashes or double hyphens (--); use a comma or period instead."
 
@@ -80,8 +80,11 @@ CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent
 - "greeting": small talk / hello.
 - "station_info": a question about what this chatbot or weather station is/does/can do.
 - "data_question": a question asking about actual sensor readings or historical data.
+- "unclear": anything else that doesn't fit the categories above, or is too vague to act on.
 
 Respond with ONLY a JSON object: {{"intent": "<one of {list(INTENTS)}>"}}"""
+
+TOO_BROAD_SENTINEL = "TOO_BROAD"
 
 SQL_SYSTEM_PROMPT = f"""You are a SQL generator for a PostgreSQL weather database.
 Schema:
@@ -95,6 +98,10 @@ Rules:
   returns one row.
 - Use time-bucketing (date_trunc) for "per day/week" style questions.
 - Default to the most recent station if none is named.
+- readings has one row per station per second, so it grows very large. If the
+  user asks for all raw readings with no meaningful time bound or filter (e.g.
+  "show me all the data", "every reading ever recorded", "dump the whole
+  table"), do NOT generate a query. Instead output exactly: {TOO_BROAD_SENTINEL}
 """
 
 FORBIDDEN_SQL = re.compile(
@@ -143,7 +150,23 @@ def reply_to_greeting(message: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": f"You are a friendly assistant for a home weather station app. Reply in one short sentence to the user's greeting and invite them to ask about temperature, humidity, pressure, or other readings. {STYLE_RULE}",
+                "content": f"You are a friendly assistant for a weather station app. Reply in one short sentence to the user's greeting and invite them to ask about temperature, humidity, pressure, or other readings. {STYLE_RULE}",
+            },
+            {"role": "user", "content": message},
+        ],
+    )
+    return response.choices[0].message.content.strip()
+
+
+def reply_to_unclear(message: str) -> str:
+    response = client.chat.completions.create(
+        model=MODEL,
+        max_tokens=300,
+        extra_body={"reasoning_effort": "low"},
+        messages=[
+            {
+                "role": "system",
+                "content": f"You are the assistant for a weather station app. The user's message doesn't clearly ask about the station's data or about the app itself. In one short sentence, say you didn't understand and invite them to ask about the station. {STYLE_RULE}",
             },
             {"role": "user", "content": message},
         ],
@@ -159,7 +182,7 @@ def reply_to_station_info(message: str) -> str:
         messages=[
             {
                 "role": "system",
-                "content": f"You are the assistant for a home weather station app. Answer the user's question about the station/app in 3 sentences or fewer, using these facts:\n{STATION_FACTS}\n{STYLE_RULE}",
+                "content": f"You are the assistant for a weather station app. Answer the user's question about the station/app in 3 sentences or fewer, using these facts:\n{STATION_FACTS}\n{STYLE_RULE}",
             },
             {"role": "user", "content": message},
         ],
@@ -176,37 +199,91 @@ def classify_and_reply(message: str, db: Session, history: list[tuple[str, str]]
     if intent == "station_info":
         return {"intent": "station_info", "reply": reply_to_station_info(message), "sql": None}
 
+    if intent == "unclear":
+        return {"intent": "unclear", "reply": reply_to_unclear(message), "sql": None}
+
     return answer_data_question(message, db, history)
 
 
+MAX_ROWS = 1000
+
+
+def reply_to_too_broad(message: str) -> str:
+    response = client.chat.completions.create(
+        model=MODEL,
+        max_tokens=600,
+        extra_body={"reasoning_effort": "medium"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are the assistant for a weather station app. Readings are recorded "
+                    "once per second per station, so the user's request below would require "
+                    "returning an unbounded/huge amount of raw data. Explain that to the user "
+                    "referencing what they specifically asked for, then propose 2-3 concrete "
+                    "narrower alternatives based on their exact wording (e.g. a specific time "
+                    f"range, a specific station, or an aggregate like an average/max/min instead "
+                    f"of raw rows). {STYLE_RULE}"
+                ),
+            },
+            {"role": "user", "content": message},
+        ],
+    )
+    return response.choices[0].message.content.strip()
+
+
+MAX_ATTEMPTS = 3
+
+
 def answer_data_question(message: str, db: Session, history: list[tuple[str, str]] = []) -> dict:
-    sql = generate_sql(message, history)
-    try:
-        validate_readonly(sql)
+    feedback = None
+
+    for attempt in range(MAX_ATTEMPTS):
+        sql = generate_sql(message, history, feedback)
+
+        if sql.strip().upper() == TOO_BROAD_SENTINEL:
+            return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
+
+        try:
+            validate_readonly(sql)
+            count = db.scalar(text(f"SELECT COUNT(*) FROM ({sql.rstrip(';')}) AS sub"))
+        except Exception as e:
+            db.rollback()
+            feedback = f"The previous query:\n{sql}\nfailed with error: {e}. Fix it."
+            continue
+
+        if count > MAX_ROWS:
+            if attempt == MAX_ATTEMPTS - 1:
+                return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
+            feedback = (
+                f"The previous query:\n{sql}\nwould return {count} rows, which is too many "
+                f"(max {MAX_ROWS}). Rewrite it as an aggregate (e.g. an average/min/max per "
+                "hour/day/week) or narrow the time range instead of returning raw rows."
+            )
+            continue
+
         result = db.execute(text(sql))
         rows = result.fetchall()
         columns = list(result.keys())
-    except Exception:
-        db.rollback()
-        sql = generate_sql(message, history)
-        validate_readonly(sql)
-        result = db.execute(text(sql))
-        rows = result.fetchall()
-        columns = list(result.keys())
+        reply = summarize_results(message, columns, rows)
+        return {"intent": "sql_query", "reply": reply, "sql": sql}
 
-    reply = summarize_results(message, columns, rows)
-    return {"intent": "sql_query", "reply": reply, "sql": sql}
+    return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
 
 
-def generate_sql(message: str, history: list[tuple[str, str]] = []) -> str:
+def generate_sql(message: str, history: list[tuple[str, str]] = [], feedback: str | None = None) -> str:
+    messages = [
+        {"role": "system", "content": SQL_SYSTEM_PROMPT},
+        *history_to_messages(history),
+        {"role": "user", "content": message},
+    ]
+    if feedback:
+        messages.append({"role": "user", "content": feedback})
+
     response = client.chat.completions.create(
         model=MODEL,
         max_tokens=1000,
-        messages=[
-            {"role": "system", "content": SQL_SYSTEM_PROMPT},
-            *history_to_messages(history),
-            {"role": "user", "content": message},
-        ],
+        messages=messages,
     )
     sql = response.choices[0].message.content.strip()
     return sql.removeprefix("```sql").removesuffix("```").strip()
