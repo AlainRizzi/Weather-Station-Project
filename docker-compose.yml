@@ -1,0 +1,28 @@
+# Local development only. Production uses Amazon RDS for PostgreSQL
+# (not this container) and ECS Fargate for the backend (built from
+# backend/Dockerfile and pushed to ECR) — see README for the deploy path.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: weather
+      POSTGRES_PASSWORD: weather
+      POSTGRES_DB: weatherstation
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://weather:weather@db:5432/weatherstation
+    ports:
+      - "8001:8001"
+    depends_on:
+      - db
+
+volumes:
+  db_data:

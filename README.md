@@ -88,11 +88,15 @@ that even a prompt-injection attempt against the LLM can't mutate data.
 ### 1. Database
 
 For local development, use the included Docker Compose file (spins up
-Postgres and runs the migration automatically):
+Postgres and runs the migration automatically). It's exposed on host port
+**5433** (not the default 5432), to avoid clashing with a native Postgres
+install some machines already have listening on 5432:
 
 ```bash
 docker compose up db
 ```
+
+Point `DATABASE_URL` in `backend/.env` at `localhost:5433`.
 
 For AWS, create an RDS for PostgreSQL instance, then run the schema against
 it once it's reachable:
@@ -141,6 +145,28 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+## Demo (no Raspberry Pi needed)
+
+To show the dashboard/chatbot working without real hardware, seed the local
+database with 2 weeks of synthetic readings (temperature, humidity,
+pressure, wind, noise, PM2.5/PM10) sampled every 10 minutes, with a
+realistic daily temperature/humidity cycle instead of flat placeholder
+values:
+
+```bash
+cd backend
+.venv\Scripts\activate       # Windows, after the venv from step 2 above
+python -m scripts.seed_demo_data
+```
+
+This inserts/replaces readings for a `demo-station` station (2,016 rows —
+14 days × 144 readings/day). Re-run it any time to regenerate a fresh 2-week
+window ending "now." Then start the backend and frontend as in steps 2 and 4
+above — the dashboard and chatbot will show this data immediately, no `pi/`
+script required.
+
+See [backend/scripts/seed_demo_data.py](backend/scripts/seed_demo_data.py).
 
 ## Deploying to AWS
 
