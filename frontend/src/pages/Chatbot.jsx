@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Form, Spinner } from "react-bootstrap";
+import { Alert, Button, Card, Form, Spinner, Table } from "react-bootstrap";
 import { Send, ExclamationTriangle } from "react-bootstrap-icons";
 import dayjs from "dayjs";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { sendChatMessage } from "../api/client.js";
+
+const markdownComponents = {
+  table: ({ ...props }) => (
+    <div style={{ overflowX: "auto" }}>
+      <Table striped bordered size="sm" className="mb-0" {...props} />
+    </div>
+  ),
+  p: ({ ...props }) => <p className="mb-0" {...props} />,
+};
 
 const STORAGE_KEY = "chat_messages";
 const GREETING = {
@@ -86,12 +97,18 @@ export default function Chatbot() {
                 <Alert variant="danger" className="d-flex align-items-center gap-2 py-2 mb-0" style={{ maxWidth: "75%" }}>
                   <ExclamationTriangle /> {m.text}
                 </Alert>
-              ) : (
+              ) : m.role === "user" ? (
                 <div
-                  className={`p-2 rounded-3 ${m.role === "user" ? "bg-primary text-white" : "bg-light"}`}
+                  className="p-2 rounded-3 bg-primary text-white"
                   style={{ maxWidth: "75%", whiteSpace: "pre-wrap" }}
                 >
                   {m.text}
+                </div>
+              ) : (
+                <div className="p-2 rounded-3 bg-light" style={{ maxWidth: "100%" }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {m.text}
+                  </ReactMarkdown>
                 </div>
               )}
               {m.time && (

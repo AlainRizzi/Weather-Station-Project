@@ -300,14 +300,26 @@ def summarize_results(message: str, columns: list[str], rows: list) -> str:
     if not rows:
         return "I didn't find any data matching that question."
 
+    if len(rows) == 1:
+        style_instruction = "Summarize the single result row in one short, friendly sentence for a non-technical user. Include the relevant numbers and units."
+    else:
+        style_instruction = (
+            f"The query returned {len(rows)} rows. Present EVERY row, not just one, as a "
+            "markdown table (GitHub-flavored markdown pipe table) with one column per "
+            "field and one row per result row. Use short column headers with units in "
+            "parentheses (e.g. 'Temp (C)'). Round numbers to 1-2 decimal places. Output "
+            "ONLY the markdown table, no surrounding prose. Do not collapse multiple rows "
+            "into a single summary sentence."
+        )
+
     response = client.chat.completions.create(
         model=MODEL,
-        max_tokens=400,
+        max_tokens=900,
         extra_body={"reasoning_effort": "low"},
         messages=[
             {
                 "role": "system",
-                "content": f"Summarize the SQL query result in one short, friendly sentence for a non-technical user. Include the relevant numbers and units. {STYLE_RULE}",
+                "content": f"{style_instruction} {STYLE_RULE}",
             },
             {
                 "role": "user",
