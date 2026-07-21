@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_log (
     id              SERIAL PRIMARY KEY,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     user_message    TEXT NOT NULL,
-    intent          TEXT,          -- 'sql_query' | 'greeting' | 'station_info'
+    intent          TEXT,          -- 'sql_query' | 'small_talk' | 'station_info' | 'unclear'
     generated_sql   TEXT,
     reply           TEXT
 );
