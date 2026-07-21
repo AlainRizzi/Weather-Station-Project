@@ -24,6 +24,7 @@ Safety constraints on generated SQL:
 """
 
 import json
+import logging
 import re
 
 from openai import OpenAI
@@ -31,6 +32,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 client = OpenAI(base_url="https://ollama.com/v1", api_key=settings.ollama_api_key)
 
@@ -79,6 +82,12 @@ STATION_INFO_PATTERNS = re.compile(
 INTENTS = ("small_talk", "station_info", "data_question", "unclear")
 
 STYLE_RULE = "Do not use emojis. Do not use em dashes or double hyphens (--); use a comma or period instead."
+
+DASH_PATTERN = re.compile(r"\s*(--|[–—])\s*")
+
+
+def enforce_style(text: str) -> str:
+    return DASH_PATTERN.sub(", ", text).strip()
 
 CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent:
 - "small_talk": greetings, acknowledgments, thanks, or other conversational chatter with no
@@ -134,11 +143,16 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
                 {"role": "user", "content": message},
             ],
         )
-        intent = json.loads(response.choices[0].message.content)["intent"]
+        raw_content = response.choices[0].message.content
+        intent = json.loads(raw_content)["intent"]
         if intent in INTENTS:
             return intent
+        logger.warning(
+            "classify_intent: LLM returned unrecognized intent %r for message %r (raw: %r)",
+            intent, message, raw_content,
+        )
     except Exception:
-        pass
+        logger.exception("classify_intent: LLM classification call failed for message %r", message)
 
     if SMALL_TALK_PATTERNS.search(message):
         return "small_talk"
@@ -170,7 +184,7 @@ def reply_to_small_talk(message: str, history: list[tuple[str, str]]) -> str:
             {"role": "user", "content": message},
         ],
     )
-    return response.choices[0].message.content.strip()
+    return enforce_style(response.choices[0].message.content)
 
 
 def reply_to_unclear(message: str) -> str:
@@ -186,7 +200,7 @@ def reply_to_unclear(message: str) -> str:
             {"role": "user", "content": message},
         ],
     )
-    return response.choices[0].message.content.strip()
+    return enforce_style(response.choices[0].message.content)
 
 
 def reply_to_station_info(message: str) -> str:
@@ -202,7 +216,7 @@ def reply_to_station_info(message: str) -> str:
             {"role": "user", "content": message},
         ],
     )
-    return response.choices[0].message.content.strip()
+    return enforce_style(response.choices[0].message.content)
 
 
 def classify_and_reply(message: str, db: Session, history: list[tuple[str, str]] = []) -> dict:
@@ -244,7 +258,7 @@ def reply_to_too_broad(message: str) -> str:
             {"role": "user", "content": message},
         ],
     )
-    return response.choices[0].message.content.strip()
+    return enforce_style(response.choices[0].message.content)
 
 
 MAX_ATTEMPTS = 3
@@ -342,4 +356,4 @@ def summarize_results(message: str, columns: list[str], rows: list) -> str:
             },
         ],
     )
-    return response.choices[0].message.content.strip()
+    return enforce_style(response.choices[0].message.content)
