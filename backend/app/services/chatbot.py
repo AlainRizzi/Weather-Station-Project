@@ -21,6 +21,14 @@ Safety constraints on generated SQL:
 - Only whitelisted tables/columns are exposed in the prompt schema.
 - Query runs against a DB role with SELECT-only privileges (see README).
 - A LIMIT is enforced if the model omits one.
+
+Streaming:
+- The pipeline is exposed as `classify_and_reply`, a generator that yields
+  progress dicts as the request moves through the pipeline (stage changes,
+  reply tokens) and returns the final result dict (intent/reply/sql) via
+  StopIteration.value. Callers that just want the final result (e.g. the
+  internal COUNT check in answer_data_question) can drain the generator
+  with `run_to_completion`.
 """
 
 import json
@@ -130,6 +138,15 @@ def history_to_messages(history: list[tuple[str, str]]) -> list[dict]:
     ]
 
 
+def run_to_completion(generator):
+    """Drain a pipeline generator, discarding progress events, and return its final result."""
+    try:
+        while True:
+            next(generator)
+    except StopIteration as stop:
+        return stop.value
+
+
 def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
     try:
         response = client.chat.completions.create(
@@ -161,118 +178,127 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
     return "unclear"
 
 
-def reply_to_small_talk(message: str, history: list[tuple[str, str]]) -> str:
-    response = client.chat.completions.create(
+def stream_reply(messages: list[dict], max_tokens: int, reasoning_effort: str = "low"):
+    """Stream a chat completion, yielding {"type": "token", "text": ...} per chunk.
+
+    Returns (via StopIteration.value) the full, style-enforced reply text.
+    """
+    stream = client.chat.completions.create(
         model=MODEL,
-        max_tokens=300,
-        extra_body={"reasoning_effort": "low"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a friendly assistant for a weather station app. The user's latest "
-                    "message is small talk (a greeting, thanks, or a short acknowledgment), not a "
-                    "data question. Look at the conversation history to tell whether this opens the "
-                    "conversation or just closes out a prior answer. If it opens the conversation, "
-                    "reply in one short sentence and invite them to ask about temperature, humidity, "
-                    "pressure, or other readings. If it just acknowledges/thanks you for a prior "
-                    f"answer, reply with a brief one-sentence acknowledgment and nothing more, do "
-                    f"not restate or re-summarize the previous answer. {STYLE_RULE}"
-                ),
-            },
-            *history_to_messages(history),
-            {"role": "user", "content": message},
-        ],
+        max_tokens=max_tokens,
+        extra_body={"reasoning_effort": reasoning_effort},
+        messages=messages,
+        stream=True,
     )
-    return enforce_style(response.choices[0].message.content)
+    chunks = []
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            chunks.append(delta)
+            yield {"type": "token", "text": delta}
+    return enforce_style("".join(chunks))
 
 
-def reply_to_unclear(message: str) -> str:
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=300,
-        extra_body={"reasoning_effort": "low"},
-        messages=[
-            {
-                "role": "system",
-                "content": f"You are the assistant for a weather station app. The user's message doesn't clearly ask about the station's data or about the app itself. In one short sentence, say you didn't understand and invite them to ask about the station. {STYLE_RULE}",
-            },
-            {"role": "user", "content": message},
-        ],
-    )
-    return enforce_style(response.choices[0].message.content)
+def reply_to_small_talk(message: str, history: list[tuple[str, str]]):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a friendly assistant for a weather station app. The user's latest "
+                "message is small talk (a greeting, thanks, or a short acknowledgment), not a "
+                "data question. Look at the conversation history to tell whether this opens the "
+                "conversation or just closes out a prior answer. If it opens the conversation, "
+                "reply in one short sentence and invite them to ask about temperature, humidity, "
+                "pressure, or other readings. If it just acknowledges/thanks you for a prior "
+                f"answer, reply with a brief one-sentence acknowledgment and nothing more, do "
+                f"not restate or re-summarize the previous answer. {STYLE_RULE}"
+            ),
+        },
+        *history_to_messages(history),
+        {"role": "user", "content": message},
+    ]
+    return (yield from stream_reply(messages, max_tokens=300))
 
 
-def reply_to_station_info(message: str) -> str:
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=600,
-        extra_body={"reasoning_effort": "low"},
-        messages=[
-            {
-                "role": "system",
-                "content": f"You are the assistant for a weather station app. Answer the user's question about the station/app in 3 sentences or fewer, using these facts:\n{STATION_FACTS}\n{STYLE_RULE}",
-            },
-            {"role": "user", "content": message},
-        ],
-    )
-    return enforce_style(response.choices[0].message.content)
+def reply_to_unclear(message: str):
+    messages = [
+        {
+            "role": "system",
+            "content": f"You are the assistant for a weather station app. The user's message doesn't clearly ask about the station's data or about the app itself. In one short sentence, say you didn't understand and invite them to ask about the station. {STYLE_RULE}",
+        },
+        {"role": "user", "content": message},
+    ]
+    return (yield from stream_reply(messages, max_tokens=300))
 
 
-def classify_and_reply(message: str, db: Session, history: list[tuple[str, str]] = []) -> dict:
+def reply_to_station_info(message: str):
+    messages = [
+        {
+            "role": "system",
+            "content": f"You are the assistant for a weather station app. Answer the user's question about the station/app in 3 sentences or fewer, using these facts:\n{STATION_FACTS}\n{STYLE_RULE}",
+        },
+        {"role": "user", "content": message},
+    ]
+    return (yield from stream_reply(messages, max_tokens=600))
+
+
+def classify_and_reply(message: str, db: Session, history: list[tuple[str, str]] = []):
+    yield {"type": "stage", "stage": "classifying"}
     intent = classify_intent(message, history)
 
     if intent == "small_talk":
-        return {"intent": "small_talk", "reply": reply_to_small_talk(message, history), "sql": None}
+        reply = yield from reply_to_small_talk(message, history)
+        return {"intent": "small_talk", "reply": reply, "sql": None}
 
     if intent == "station_info":
-        return {"intent": "station_info", "reply": reply_to_station_info(message), "sql": None}
+        reply = yield from reply_to_station_info(message)
+        return {"intent": "station_info", "reply": reply, "sql": None}
 
     if intent == "unclear":
-        return {"intent": "unclear", "reply": reply_to_unclear(message), "sql": None}
+        reply = yield from reply_to_unclear(message)
+        return {"intent": "unclear", "reply": reply, "sql": None}
 
-    return answer_data_question(message, db, history)
+    result = yield from answer_data_question(message, db, history)
+    return result
 
 
 MAX_ROWS = 1000
 
 
-def reply_to_too_broad(message: str) -> str:
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=600,
-        extra_body={"reasoning_effort": "medium"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are the assistant for a weather station app. Readings are recorded "
-                    "once per second per station, so the user's request below would require "
-                    "returning an unbounded/huge amount of raw data. Explain that to the user "
-                    "referencing what they specifically asked for, then propose 2-3 concrete "
-                    "narrower alternatives based on their exact wording (e.g. a specific time "
-                    f"range, a specific station, or an aggregate like an average/max/min instead "
-                    f"of raw rows). {STYLE_RULE}"
-                ),
-            },
-            {"role": "user", "content": message},
-        ],
-    )
-    return enforce_style(response.choices[0].message.content)
+def reply_to_too_broad(message: str):
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are the assistant for a weather station app. Readings are recorded "
+                "once per second per station, so the user's request below would require "
+                "returning an unbounded/huge amount of raw data. Explain that to the user "
+                "referencing what they specifically asked for, then propose 2-3 concrete "
+                "narrower alternatives based on their exact wording (e.g. a specific time "
+                f"range, a specific station, or an aggregate like an average/max/min instead "
+                f"of raw rows). {STYLE_RULE}"
+            ),
+        },
+        {"role": "user", "content": message},
+    ]
+    return (yield from stream_reply(messages, max_tokens=600, reasoning_effort="medium"))
 
 
 MAX_ATTEMPTS = 3
 
 
-def answer_data_question(message: str, db: Session, history: list[tuple[str, str]] = []) -> dict:
+def answer_data_question(message: str, db: Session, history: list[tuple[str, str]] = []):
     feedback = None
 
     for attempt in range(MAX_ATTEMPTS):
+        yield {"type": "stage", "stage": "generating_sql" if attempt == 0 else "retrying_query"}
         sql = generate_sql(message, history, feedback)
 
         if sql.strip().upper() == TOO_BROAD_SENTINEL:
-            return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
+            reply = yield from reply_to_too_broad(message)
+            return {"intent": "sql_query", "reply": reply, "sql": None}
 
+        yield {"type": "stage", "stage": "running_query"}
         try:
             validate_readonly(sql)
             count = db.scalar(text(f"SELECT COUNT(*) FROM ({sql.rstrip(';')}) AS sub"))
@@ -283,7 +309,8 @@ def answer_data_question(message: str, db: Session, history: list[tuple[str, str
 
         if count > MAX_ROWS:
             if attempt == MAX_ATTEMPTS - 1:
-                return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
+                reply = yield from reply_to_too_broad(message)
+                return {"intent": "sql_query", "reply": reply, "sql": None}
             feedback = (
                 f"The previous query:\n{sql}\nwould return {count} rows, which is too many "
                 f"(max {MAX_ROWS}). Rewrite it as an aggregate (e.g. an average/min/max per "
@@ -294,10 +321,14 @@ def answer_data_question(message: str, db: Session, history: list[tuple[str, str
         result = db.execute(text(sql))
         rows = result.fetchall()
         columns = list(result.keys())
-        reply = summarize_results(message, columns, rows)
+        if not rows:
+            return {"intent": "sql_query", "reply": "I didn't find any data matching that question.", "sql": sql}
+        yield {"type": "stage", "stage": "summarizing"}
+        reply = yield from summarize_results(message, columns, rows)
         return {"intent": "sql_query", "reply": reply, "sql": sql}
 
-    return {"intent": "sql_query", "reply": reply_to_too_broad(message), "sql": None}
+    reply = yield from reply_to_too_broad(message)
+    return {"intent": "sql_query", "reply": reply, "sql": None}
 
 
 def generate_sql(message: str, history: list[tuple[str, str]] = [], feedback: str | None = None) -> str:
@@ -325,10 +356,7 @@ def validate_readonly(sql: str) -> None:
         raise ValueError("Generated query contains a forbidden keyword")
 
 
-def summarize_results(message: str, columns: list[str], rows: list) -> str:
-    if not rows:
-        return "I didn't find any data matching that question."
-
+def summarize_results(message: str, columns: list[str], rows: list):
     if len(rows) == 1:
         style_instruction = "Summarize the single result row in one short, friendly sentence for a non-technical user. Include the relevant numbers and units."
     else:
@@ -341,19 +369,14 @@ def summarize_results(message: str, columns: list[str], rows: list) -> str:
             "into a single summary sentence."
         )
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=900,
-        extra_body={"reasoning_effort": "low"},
-        messages=[
-            {
-                "role": "system",
-                "content": f"{style_instruction} {STYLE_RULE}",
-            },
-            {
-                "role": "user",
-                "content": f"Question: {message}\nColumns: {columns}\nRows: {rows[:20]}",
-            },
-        ],
-    )
-    return enforce_style(response.choices[0].message.content)
+    messages = [
+        {
+            "role": "system",
+            "content": f"{style_instruction} {STYLE_RULE}",
+        },
+        {
+            "role": "user",
+            "content": f"Question: {message}\nColumns: {columns}\nRows: {rows[:20]}",
+        },
+    ]
+    return (yield from stream_reply(messages, max_tokens=900))

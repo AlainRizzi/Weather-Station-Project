@@ -5,7 +5,7 @@ import dayjs from "dayjs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { sendChatMessage } from "../api/client.js";
+import { streamChatMessage } from "../api/client.js";
 
 const markdownComponents = {
   table: ({ ...props }) => (
@@ -23,8 +23,14 @@ const GREETING = {
   time: Date.now(),
 };
 
-const LOADING_STAGES = ["thinking...", "generating query...", "fetching results...", "summarizing..."];
-const STAGE_INTERVAL_MS = 1800;
+const STAGE_LABELS = {
+  classifying: "thinking...",
+  generating_sql: "generating query...",
+  retrying_query: "adjusting query...",
+  running_query: "fetching results...",
+  summarizing: "summarizing...",
+};
+const DEFAULT_STAGE_LABEL = "thinking...";
 
 function loadMessages() {
   try {
@@ -40,21 +46,14 @@ export default function Chatbot() {
   const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [stageIndex, setStageIndex] = useState(0);
+  const [stageLabel, setStageLabel] = useState(DEFAULT_STAGE_LABEL);
+  const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  useEffect(() => {
-    if (!loading) return;
-    const id = setInterval(() => {
-      setStageIndex((i) => Math.min(i + 1, LOADING_STAGES.length - 1));
-    }, STAGE_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [loading]);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -65,14 +64,41 @@ export default function Chatbot() {
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map(({ role, text }) => ({ role, text }));
 
+    const assistantId = crypto.randomUUID();
     setMessages((prev) => [...prev, { role: "user", text, time: Date.now() }]);
     setInput("");
-    setStageIndex(0);
+    setStageLabel(DEFAULT_STAGE_LABEL);
+    setStreaming(false);
     setLoading(true);
 
+    function upsertAssistantMessage(updateText) {
+      setMessages((prev) => {
+        const index = prev.findIndex((m) => m.id === assistantId);
+        if (index === -1) {
+          return [...prev, { id: assistantId, role: "assistant", text: updateText(""), time: Date.now() }];
+        }
+        const next = [...prev];
+        next[index] = { ...next[index], text: updateText(next[index].text) };
+        return next;
+      });
+    }
+
     try {
-      const { reply } = await sendChatMessage(text, history);
-      setMessages((prev) => [...prev, { role: "assistant", text: reply, time: Date.now() }]);
+      await streamChatMessage(text, history, (event) => {
+        if (event.type === "stage") {
+          setStageLabel(STAGE_LABELS[event.stage] ?? DEFAULT_STAGE_LABEL);
+        } else if (event.type === "token") {
+          setStreaming(true);
+          upsertAssistantMessage((prevText) => prevText + event.text);
+        } else if (event.type === "done") {
+          upsertAssistantMessage(() => event.reply);
+        } else if (event.type === "error") {
+          setMessages((prev) => [
+            ...prev,
+            { role: "error", text: event.message || "Sorry, something went wrong answering that.", time: Date.now() },
+          ]);
+        }
+      });
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -80,6 +106,7 @@ export default function Chatbot() {
       ]);
     } finally {
       setLoading(false);
+      setStreaming(false);
     }
   }
 
@@ -118,9 +145,9 @@ export default function Chatbot() {
               )}
             </div>
           ))}
-          {loading && (
+          {loading && !streaming && (
             <div className="d-flex align-items-center gap-2 text-muted">
-              <Spinner animation="border" size="sm" /> {LOADING_STAGES[stageIndex]}
+              <Spinner animation="border" size="sm" /> {stageLabel}
             </div>
           )}
           <div ref={bottomRef} />
