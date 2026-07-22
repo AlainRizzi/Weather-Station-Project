@@ -1,11 +1,11 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel
 from sqlalchemy import select, insert
 from sqlalchemy.orm import Session
+from fastapi import Depends
 
-from app.config import settings
 from app.db import get_db
 from app.models.models import Station, Reading
 
@@ -25,13 +25,7 @@ class ReadingIn(BaseModel):
     pm10_ugm3: float | None = None
 
 
-def require_station_api_key(authorization: str = Header(...)) -> None:
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or token not in settings.station_api_key_set:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing station API key")
-
-
-@router.post("", dependencies=[Depends(require_station_api_key)], status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 def create_reading(payload: ReadingIn, db: Session = Depends(get_db)):
     station = db.scalar(select(Station).where(Station.name == payload.station_name))
     if station is None:
