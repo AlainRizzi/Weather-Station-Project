@@ -2,8 +2,8 @@
 Seeds the database with 2 weeks of synthetic weather readings, sampled every
 10 minutes, for demoing the dashboard/chatbot without a Raspberry Pi.
 
-Not a substitute for db/migrations/001_init.sql — run the migration (or
-`docker compose up db`, which runs it automatically) first.
+Not a substitute for db/migrations/001_init.sql (backend/db/migrations/001_init.sql) —
+run the migration (or `docker compose up db`, which runs it automatically) first.
 
 Usage (from backend/, with DATABASE_URL pointing at the target DB):
     python -m scripts.seed_demo_data

@@ -46,7 +46,7 @@ db/         SQL schema / migrations
 - **Database** — **Amazon RDS for PostgreSQL**, in the same VPC as the ECS
   service so the backend reaches it over a private subnet rather than the
   public internet. RDS doesn't support the TimescaleDB extension, so the
-  schema in [db/migrations/001_init.sql](db/migrations/001_init.sql) is
+  schema in [backend/db/migrations/001_init.sql](backend/db/migrations/001_init.sql) is
   plain SQL; the Timescale-specific hypertable line is commented out and
   only relevant if this ever moves to Timescale Cloud instead.
 
@@ -102,7 +102,7 @@ For AWS, create an RDS for PostgreSQL instance, then run the schema against
 it once it's reachable:
 
 ```bash
-psql "<your-rds-connection-string>" -f db/migrations/001_init.sql
+psql "<your-rds-connection-string>" -f backend/db/migrations/001_init.sql
 ```
 
 ### 2. Backend (FastAPI)
