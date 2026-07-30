@@ -109,7 +109,7 @@ psql "<your-rds-connection-string>" -f db/migrations/001_init.sql
 
 ```bash
 cd backend
-cp .env.example .env   # fill in DATABASE_URL, OLLAMA_API_KEY, STATION_API_KEYS
+cp .env.example .env   # fill in DATABASE_URL, OLLAMA_API_KEY
 python -m venv .venv
 .venv\Scripts\activate       # Windows
 pip install -r requirements.txt
@@ -124,16 +124,20 @@ Copy `pi/` to the Raspberry Pi, then:
 
 ```bash
 cd pi
-cp .env.example .env   # set API_URL to your deployed backend, STATION_API_KEY
+cp .env.example .env   # set API_URL to your deployed backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python sensor_client.py
 ```
 
-Replace the placeholder values in `read_sensors()` (in
-[pi/sensor_client.py](pi/sensor_client.py)) with real driver calls for your
-specific sensors (e.g. `bme280`, `DHT22`, anemometer via GPIO).
+Sensor: **Linovision 8-in-1** weather sensor over RS485/Modbus RTU, via a
+USB-to-RS485 adapter on the Pi. `read_sensors()` in
+[pi/sensor_client.py](pi/sensor_client.py) polls it with `pymodbus`; the
+register addresses/scales in `LINOVISION_REGISTERS` are placeholders and
+need to be updated from the sensor's Modbus manual once it's in hand.
+Configure the serial connection via `MODBUS_PORT`, `MODBUS_BAUDRATE`,
+`MODBUS_PARITY`, `MODBUS_SLAVE_ID` in `pi/.env`.
 
 ### 4. Frontend (React)
 
@@ -181,7 +185,7 @@ docker push <account-id>.dkr.ecr.<region>.amazonaws.com/weather-station-backend:
 ```
 
 Then point an ECS Fargate service/task definition at that image, with
-`DATABASE_URL`, `OLLAMA_API_KEY`, `STATION_API_KEYS`, and `CORS_ORIGINS`
+`DATABASE_URL`, `OLLAMA_API_KEY`, and `CORS_ORIGINS`
 set as task environment variables (use AWS Secrets Manager or SSM Parameter
 Store for the secrets, not plaintext task definitions). Put the service
 behind an Application Load Balancer and in the same VPC as the RDS instance.
@@ -202,8 +206,8 @@ front of the backend.
 
 | File | Variable | Purpose |
 |---|---|---|
-| `pi/.env` | `API_URL`, `STATION_API_KEY`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS` | Where/how the Pi sends readings |
-| `backend/.env` | `DATABASE_URL`, `STATION_API_KEYS`, `OLLAMA_API_KEY`, `CORS_ORIGINS` | DB connection, valid Pi API keys, LLM key, allowed frontend origins |
+| `pi/.env` | `API_URL`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS` | Where/how the Pi sends readings |
+| `backend/.env` | `DATABASE_URL`, `OLLAMA_API_KEY`, `CORS_ORIGINS` | DB connection, LLM key, allowed frontend origins |
 | `frontend/.env` | `VITE_API_URL` | Backend base URL for the website |
 
 ## Next steps
