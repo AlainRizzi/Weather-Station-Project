@@ -92,10 +92,16 @@ INTENTS = ("small_talk", "station_info", "data_question", "unclear")
 STYLE_RULE = "Do not use emojis. Do not use em dashes or double hyphens (--); use a comma or period instead."
 
 DASH_PATTERN = re.compile(r"\s*(--|[–—])\s*")
+TABLE_ROW_PATTERN = re.compile(r"^\s*\|?[\s:|-]+\|?\s*$")
 
 
 def enforce_style(text: str) -> str:
-    return DASH_PATTERN.sub(", ", text).strip()
+    lines = text.split("\n")
+    fixed_lines = [
+        line if TABLE_ROW_PATTERN.match(line) else DASH_PATTERN.sub(", ", line)
+        for line in lines
+    ]
+    return "\n".join(fixed_lines).strip()
 
 CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent:
 - "small_talk": greetings, acknowledgments, thanks, or other conversational chatter with no
@@ -103,6 +109,14 @@ CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent
 - "station_info": a question about what this chatbot or weather station is/does/can do.
 - "data_question": a question asking about actual sensor readings or historical data.
 - "unclear": anything else that doesn't fit the categories above, or is too vague to act on.
+
+The message may be a short follow-up that only makes sense in light of the
+conversation so far (e.g. "lowest" after a question about highest humidity,
+or "what about wind?" after a data question). Read the conversation history
+first and interpret the latest message as a continuation of it before
+classifying: if the history shows the conversation was about sensor data,
+prefer "data_question" over "unclear" for a short follow-up. Only classify
+as "unclear" if the message is still ambiguous after considering the history.
 
 Respond with ONLY a JSON object: {{"intent": "<one of {list(INTENTS)}>"}}"""
 
@@ -120,6 +134,11 @@ Rules:
   returns one row.
 - Use time-bucketing (date_trunc) for "per day/week" style questions.
 - Default to the most recent station if none is named.
+- The latest message may be a short follow-up that only makes sense in light
+  of the conversation history (e.g. "lowest" after a question about highest
+  humidity means "lowest humidity"; "what about last month?" reuses the
+  metric from the prior question with a new time range). Resolve the message
+  against the conversation history before generating SQL.
 - readings has one row per station per second, so it grows very large. If the
   user asks for all raw readings with no meaningful time bound or filter (e.g.
   "show me all the data", "every reading ever recorded", "dump the whole
@@ -152,7 +171,7 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
         response = client.chat.completions.create(
             model=MODEL,
             max_tokens=200,
-            extra_body={"reasoning_effort": "low"},
+            extra_body={"reasoning_effort": "medium"},
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
