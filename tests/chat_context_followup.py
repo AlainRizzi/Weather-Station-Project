@@ -68,6 +68,18 @@ SCENARIOS = [
         "message": "hello",
         "expected": "small_talk",
     },
+    {
+        # Regression check: a plain, unambiguous first-turn data question
+        # with no history at all. This should never fail -- if it does,
+        # it's a sign the LLM call itself is erroring/truncating (e.g.
+        # reasoning_effort too high for max_tokens) and silently falling
+        # back to the keyword-only classifier, not a context-resolution
+        # issue.
+        "name": "unambiguous-first-turn-data-question",
+        "history": [],
+        "message": "give me highest temperature you have recorded",
+        "expected": "data_question",
+    },
 ]
 
 

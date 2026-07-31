@@ -170,7 +170,13 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
     try:
         response = client.chat.completions.create(
             model=MODEL,
-            max_tokens=200,
+            # "high" reasoning effort needs headroom for its internal
+            # reasoning trace before it emits the final JSON; a low
+            # max_tokens here truncates that trace mid-thought, produces no
+            # parseable JSON, and silently drops every call into the
+            # keyword-only fallback below (which misclassifies almost
+            # everything as "unclear").
+            max_tokens=1500,
             extra_body={"reasoning_effort": "high"},
             response_format={"type": "json_object"},
             messages=[
