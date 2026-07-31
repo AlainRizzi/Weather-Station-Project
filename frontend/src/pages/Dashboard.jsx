@@ -26,14 +26,19 @@ function StatCard({ icon, label, value, unit, metricKey }) {
 
 export default function Dashboard() {
   const [reading, setReading] = useState(null);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    getLatestReading().then(setReading).catch((e) => setError(e.message));
+    getLatestReading()
+      .then((data) => setReading(data))
+      .catch((e) => setError(e.message))
+      .finally(() => setLoaded(true));
   }, []);
 
   if (error) return <Alert variant="danger">Failed to load latest reading: {error}</Alert>;
-  if (!reading) return <Spinner animation="border" />;
+  if (!loaded) return <Spinner animation="border" />;
+  if (!reading) return <Alert variant="secondary">No readings yet.</Alert>;
 
   return (
     <>
