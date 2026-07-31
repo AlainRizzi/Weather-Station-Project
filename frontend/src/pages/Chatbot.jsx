@@ -16,7 +16,6 @@ const markdownComponents = {
   p: ({ ...props }) => <p className="mb-0" {...props} />,
 };
 
-const STORAGE_KEY = "chat_messages";
 const GREETING = {
   role: "assistant",
   text: "Hi! Ask me about the weather station's data, e.g. \"what was last week's highest temperature?\"",
@@ -32,18 +31,8 @@ const STAGE_LABELS = {
 };
 const DEFAULT_STAGE_LABEL = "thinking...";
 
-function loadMessages() {
-  try {
-    const saved = sessionStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {
-    // ignore corrupt storage, fall back to greeting
-  }
-  return [GREETING];
-}
-
 export default function Chatbot() {
-  const [messages, setMessages] = useState(loadMessages);
+  const [messages, setMessages] = useState([GREETING]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [stageLabel, setStageLabel] = useState(DEFAULT_STAGE_LABEL);
@@ -51,7 +40,6 @@ export default function Chatbot() {
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
