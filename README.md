@@ -9,19 +9,19 @@ temperature?") and small talk / questions about the station itself.
 ## Architecture
 
 ```
-Raspberry Pi (sensors)
-  -> sensor_client.py reads sensors every 1s
-  -> POST /readings  (HTTPS + API key)
+Raspberry Pi / ESP32 (sensors)
+  -> sensor_client.py / sensor_client.ino reads sensors every 30s
+  -> POST /readings  (HTTPS)
        |
        v
 FastAPI backend  ---------------------------  React frontend
-  - /readings   (ingest, station-key auth)     - Dashboard (latest/historical readings)
-  - /stats/*    (dashboard queries)            - Chatbot page
+  - /readings   (ingest)                       - Dashboard (latest/historical readings)
+  - /stats/*    (dashboard queries)             - Chatbot page
   - /chat       (text-to-SQL chatbot via
                  Ollama Cloud, gpt-oss:20b)
        |
        v
-PostgreSQL (Amazon RDS)
+PostgreSQL (Railway)
   - stations
   - readings
   - chat_log
@@ -30,28 +30,30 @@ PostgreSQL (Amazon RDS)
 Repo layout:
 
 ```
-pi/         Raspberry Pi sensor-reading + upload script
-backend/    FastAPI app (ingestion API, stats API, chatbot)
+pi/         Raspberry Pi (Python) / ESP32 (Arduino) sensor-reading + upload script
+backend/    FastAPI app (ingestion API, stats API, chatbot) + db/migrations (SQL schema)
 frontend/   React (Vite) website
-db/         SQL schema / migrations
 ```
 
-## Deployment target (AWS)
+## Deployment target (Railway + Vercel)
 
-- **Backend** — Docker image (`backend/Dockerfile`) pushed to Amazon ECR, run
-  on **ECS Fargate** behind an Application Load Balancer.
-- **Frontend** — static Vite build (`npm run build` → `frontend/dist/`)
-  uploaded to an **S3** bucket, served through **CloudFront**. No container
-  needed for the frontend.
-- **Database** — **Amazon RDS for PostgreSQL**, in the same VPC as the ECS
-  service so the backend reaches it over a private subnet rather than the
-  public internet. RDS doesn't support the TimescaleDB extension, so the
-  schema in [backend/db/migrations/001_init.sql](backend/db/migrations/001_init.sql) is
-  plain SQL; the Timescale-specific hypertable line is commented out and
-  only relevant if this ever moves to Timescale Cloud instead.
+- **Backend + Database** — both hosted on **Railway**, in the same project:
+  a Postgres service, and the backend service built directly from
+  [backend/Dockerfile](backend/Dockerfile) (Railway's "Root Directory" for
+  that service is set to `backend`). The backend's `DATABASE_URL` uses
+  Railway's private network reference (`${{Postgres.DATABASE_URL}}`)
+  rather than the public proxy URL, so traffic stays inside Railway's
+  network and avoids egress billing. The schema in
+  [backend/db/migrations/001_init.sql](backend/db/migrations/001_init.sql)
+  is applied automatically via a Railway **Pre-Deploy Command**:
+  `psql "$DATABASE_URL" -f db/migrations/001_init.sql` (path is relative to
+  `/app` inside the built image, i.e. `backend/`'s contents).
+- **Frontend** — deployed separately on **Vercel** (Root Directory set to
+  `frontend`), which auto-detects the Vite build. No container needed.
 
 `docker-compose.yml` at the repo root is **local development only** (it runs
-a throwaway Postgres container) — it is not part of the AWS deployment path.
+a throwaway Postgres container alongside the backend/frontend) — it is not
+part of the Railway/Vercel deployment path.
 
 ## The chatbot
 
@@ -72,7 +74,7 @@ Everything else is treated as a **data question** and goes through:
 The LLM used is **[Ollama Cloud](https://ollama.com/pricing)**'s
 `gpt-oss:20b-cloud` model, called through its OpenAI-compatible API — this
 keeps the chatbot free (Ollama's Free tier, no credit card) and avoids
-hosting a model on our own AWS compute, at the cost of somewhat weaker SQL
+hosting a model on our own compute, at the cost of somewhat weaker SQL
 generation than a frontier model like Claude/GPT — hence the strict
 SELECT-only validation regardless of which LLM generates the query. Get a
 free API key at [ollama.com](https://ollama.com) (Cloud → API keys).
@@ -98,11 +100,13 @@ docker compose up db
 
 Point `DATABASE_URL` in `backend/.env` at `localhost:5433`.
 
-For AWS, create an RDS for PostgreSQL instance, then run the schema against
-it once it's reachable:
+For Railway, add a Postgres service to the project, then either let the
+backend service's **Pre-Deploy Command** apply the schema automatically on
+every deploy (see "Deployment target" above), or run it manually against
+the public proxy connection string (Postgres service → Connect tab):
 
 ```bash
-psql "<your-rds-connection-string>" -f backend/db/migrations/001_init.sql
+psql "<your-railway-postgres-public-url>" -f backend/db/migrations/001_init.sql
 ```
 
 ### 2. Backend (FastAPI)
@@ -118,9 +122,13 @@ uvicorn app.main:app --reload
 
 API docs available at `http://localhost:8000/docs`.
 
-### 3. Raspberry Pi client
+### 3. Sensor client (Raspberry Pi or ESP32)
 
-Copy `pi/` to the Raspberry Pi, then:
+Two equivalent implementations are provided; use whichever matches your
+hardware.
+
+**Raspberry Pi** ([pi/sensor_client.py](pi/sensor_client.py)) — copy `pi/`
+to the Pi, then:
 
 ```bash
 cd pi
@@ -131,13 +139,24 @@ pip install -r requirements.txt
 python sensor_client.py
 ```
 
-Sensor: **Linovision 8-in-1** weather sensor over RS485/Modbus RTU, via a
-USB-to-RS485 adapter on the Pi. `read_sensors()` in
-[pi/sensor_client.py](pi/sensor_client.py) polls it with `pymodbus`; the
-register addresses/scales in `LINOVISION_REGISTERS` are placeholders and
-need to be updated from the sensor's Modbus manual once it's in hand.
+**ESP32** ([pi/sensor_client.ino](pi/sensor_client.ino)) — open in the
+Arduino IDE (install the `ModbusMaster` and `ArduinoJson` libraries, plus
+the `esp32` board package), fill in the Wi-Fi/API constants near the top of
+the file, and flash it. See the file's header comment for wiring notes
+(UART2 pins, optional RS485 driver-enable pin).
+
+Sensor: **Linovision IOT-S300WS8 8-in-1** weather sensor over RS485/Modbus
+RTU. Both clients read three separate register blocks per the sensor's
+manual (main block, then PM2.5/PM10, then noise, read as separate Modbus
+requests — the manual requires this and the gaps between them are
+undefined). The default Modbus slave ID is set to `1`, but the manual's
+per-model default-address table lists `46` for the 8-in-1 (S800) variant —
+confirm the real address on the physical device (USB config tool, or ASCII
+command `0XA;MBAD=?`) before relying on the default.
+
 Configure the serial connection via `MODBUS_PORT`, `MODBUS_BAUDRATE`,
-`MODBUS_PARITY`, `MODBUS_SLAVE_ID` in `pi/.env`.
+`MODBUS_PARITY`, `MODBUS_SLAVE_ID` in `pi/.env` (Python) or the constants
+near the top of `sensor_client.ino` (ESP32).
 
 ### 4. Frontend (React)
 
@@ -149,6 +168,11 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+`VITE_API_URL` must include the scheme (`https://...`, not just the bare
+host) — without it, the browser treats API calls as relative paths against
+the frontend's own origin instead of the backend, which fails silently
+with a 404 rather than an obvious connection error.
 
 ## Demo (no Raspberry Pi needed)
 
@@ -168,39 +192,67 @@ This inserts/replaces readings for a `demo-station` station (2,016 rows —
 14 days × 144 readings/day). Re-run it any time to regenerate a fresh 2-week
 window ending "now." Then start the backend and frontend as in steps 2 and 4
 above — the dashboard and chatbot will show this data immediately, no `pi/`
-script required.
+script required. It only ever touches `demo-station` rows, so it's safe to
+delete later without affecting any other station's data:
+
+```sql
+DELETE FROM readings WHERE station_id = (SELECT id FROM stations WHERE name = 'demo-station');
+DELETE FROM stations WHERE name = 'demo-station';
+```
+
+To seed a deployed Railway database instead of the local one, set
+`DATABASE_URL` to the Postgres service's public proxy URL (Connect tab —
+the private `*.railway.internal` host is only reachable from inside
+Railway's network, not from your machine) before running the script:
+
+```bash
+set DATABASE_URL=postgresql+psycopg://postgres:<password>@<public-host>:<port>/railway   # Windows cmd
+python -m scripts.seed_demo_data
+```
 
 See [backend/scripts/seed_demo_data.py](backend/scripts/seed_demo_data.py).
 
-## Deploying to AWS
+## Deploying to Railway + Vercel
 
-### Backend → ECR + ECS Fargate
+### Database + Backend → Railway
 
-```bash
-cd backend
-docker build -t weather-station-backend .
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account-id>.dkr.ecr.<region>.amazonaws.com
-docker tag weather-station-backend:latest <account-id>.dkr.ecr.<region>.amazonaws.com/weather-station-backend:latest
-docker push <account-id>.dkr.ecr.<region>.amazonaws.com/weather-station-backend:latest
-```
+1. Create a Railway project, add a **Postgres** service to it.
+2. Add the backend as a second service in the same project, deployed from
+   this GitHub repo, with **Root Directory** set to `backend` (Railway
+   builds `backend/Dockerfile` directly — no Railpack/buildpack guessing).
+3. In the backend service's **Variables** tab, set:
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (the private-network
+     reference — keeps traffic off the public internet and out of egress
+     billing; do **not** use `DATABASE_PUBLIC_URL` here).
+   - `OLLAMA_API_KEY` = your key from [ollama.com](https://ollama.com)
+     (Cloud → API keys).
+   - `CORS_ORIGINS` = your Vercel production domain (see below), e.g.
+     `https://your-project.vercel.app`.
+4. In the backend service's **Settings → Deploy**, generate a public domain
+   (target port `8001`, matching the `EXPOSE`/`CMD` port in
+   `backend/Dockerfile`), and set a **Pre-Deploy Command** to apply the
+   schema on every deploy:
+   ```
+   psql "$DATABASE_URL" -f db/migrations/001_init.sql
+   ```
+   (path is relative to `/app` inside the image, i.e. `backend/db/migrations/`
+   — the migration uses `CREATE TABLE IF NOT EXISTS`, so it's safe to
+   re-run on every deploy.)
 
-Then point an ECS Fargate service/task definition at that image, with
-`DATABASE_URL`, `OLLAMA_API_KEY`, and `CORS_ORIGINS`
-set as task environment variables (use AWS Secrets Manager or SSM Parameter
-Store for the secrets, not plaintext task definitions). Put the service
-behind an Application Load Balancer and in the same VPC as the RDS instance.
+### Frontend → Vercel
 
-### Frontend → S3 + CloudFront
-
-```bash
-cd frontend
-npm run build
-aws s3 sync dist/ s3://<your-bucket-name> --delete
-```
-
-Point a CloudFront distribution at the bucket (with an origin access
-control) and set `VITE_API_URL` at build time to the ALB/CloudFront URL in
-front of the backend.
+1. Import this repo as a new Vercel project, with **Root Directory** set to
+   `frontend`. Vercel auto-detects the Vite build, no config needed.
+2. Set the `VITE_API_URL` environment variable to the backend's Railway
+   domain from step 4 above (e.g.
+   `https://weather-station-project-production.up.railway.app`), including
+   the `https://` scheme.
+3. After deploying, note your project's **stable production domain**
+   (Project → Settings → Domains — looks like `your-project.vercel.app`,
+   with no random suffix). Use that exact URL for `CORS_ORIGINS` on
+   Railway, not a preview-deployment URL (Vercel gives every preview build
+   its own random subdomain, which won't match a fixed `CORS_ORIGINS`
+   value). Test against the production domain, not preview links.
 
 ## Environment variables summary
 
