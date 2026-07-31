@@ -171,7 +171,7 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
         response = client.chat.completions.create(
             model=MODEL,
             max_tokens=200,
-            extra_body={"reasoning_effort": "medium"},
+            extra_body={"reasoning_effort": "high"},
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},

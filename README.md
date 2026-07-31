@@ -30,7 +30,9 @@ PostgreSQL (Railway)
 Repo layout:
 
 ```
-pi/         Raspberry Pi (Python) / ESP32 (Arduino) sensor-reading + upload script
+pi/             Sensor-reading + upload scripts (Raspberry Pi Python / ESP32 Arduino)
+  linovision/   Linovision IOT-S300WS8 8-in-1 weather sensor
+  thd/          Autonics THD-WD1-T temperature/humidity sensor
 backend/    FastAPI app (ingestion API, stats API, chatbot) + db/migrations (SQL schema)
 frontend/   React (Vite) website
 ```
@@ -122,41 +124,56 @@ uvicorn app.main:app --reload
 
 API docs available at `http://localhost:8000/docs`.
 
-### 3. Sensor client (Raspberry Pi or ESP32)
+### 3. Sensor clients (Raspberry Pi or ESP32)
 
-Two equivalent implementations are provided; use whichever matches your
-hardware.
+Two independent sensors are supported, each with its own subfolder under
+`pi/`, its own `.env`, and its own `station_name` (so their readings land
+as separate stations rather than colliding on the same row). Both share
+`pi/requirements.txt` for the Python/Pi variant. Each subfolder has two
+equivalent implementations (Python for Raspberry Pi, `.ino` for ESP32); use
+whichever matches your hardware.
 
-**Raspberry Pi** ([pi/sensor_client.py](pi/sensor_client.py)) — copy `pi/`
-to the Pi, then:
-
-```bash
-cd pi
-cp .env.example .env   # set API_URL to your deployed backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python sensor_client.py
-```
-
-**ESP32** ([pi/sensor_client.ino](pi/sensor_client.ino)) — open in the
-Arduino IDE (install the `ModbusMaster` and `ArduinoJson` libraries, plus
-the `esp32` board package), fill in the Wi-Fi/API constants near the top of
-the file, and flash it. See the file's header comment for wiring notes
-(UART2 pins, optional RS485 driver-enable pin).
-
-Sensor: **Linovision IOT-S300WS8 8-in-1** weather sensor over RS485/Modbus
-RTU. Both clients read three separate register blocks per the sensor's
-manual (main block, then PM2.5/PM10, then noise, read as separate Modbus
-requests — the manual requires this and the gaps between them are
+**[pi/linovision/](pi/linovision/)** — **Linovision IOT-S300WS8 8-in-1**
+weather sensor (temperature, humidity, pressure, wind, noise, PM2.5/PM10)
+over RS485/Modbus RTU. Reads three separate register blocks per the
+sensor's manual (main block, then PM2.5/PM10, then noise, as separate
+Modbus requests — the manual requires this and the gaps between them are
 undefined). The default Modbus slave ID is set to `1`, but the manual's
 per-model default-address table lists `46` for the 8-in-1 (S800) variant —
 confirm the real address on the physical device (USB config tool, or ASCII
 command `0XA;MBAD=?`) before relying on the default.
 
-Configure the serial connection via `MODBUS_PORT`, `MODBUS_BAUDRATE`,
-`MODBUS_PARITY`, `MODBUS_SLAVE_ID` in `pi/.env` (Python) or the constants
-near the top of `sensor_client.ino` (ESP32).
+**[pi/thd/](pi/thd/)** — **Autonics THD-WD1-T** temperature/humidity
+sensor over RS485/Modbus RTU. Reads two single-register (16-bit signed,
+×0.01 scale) values in one request — simpler than the Linovision sensor,
+no register gaps or multi-block reads needed. Default Modbus slave ID is
+`1` (factory default, set via the rotary switch/upper address terminal
+under the case cover — not changeable over the wire like the Linovision).
+
+Raspberry Pi setup (either subfolder):
+
+```bash
+cd pi/linovision   # or pi/thd
+cp .env.example .env   # set API_URL to your deployed backend, station_name
+python -m venv .venv
+source .venv/bin/activate
+pip install -r ../requirements.txt
+python sensor_client.py
+```
+
+ESP32 setup: open the subfolder's `sensor_client.ino` in the Arduino IDE
+(install the `ModbusMaster` and `ArduinoJson` libraries, plus the `esp32`
+board package), fill in the Wi-Fi/API constants near the top of the file,
+and flash it. See the file's header comment for wiring notes (UART2 pins,
+optional RS485 driver-enable pin).
+
+If running both sensors from the same Raspberry Pi, use a separate
+USB-to-RS485 adapter/port for each (set via `MODBUS_PORT` in each
+subfolder's `.env`) and run each script as its own process — they can't
+share one `.env`/process since each needs its own `STATION_NAME`. If both
+sensors are ever wired onto the *same* RS485 bus instead of separate
+adapters, one of them must be reassigned to a different Modbus address,
+since Modbus requires unique addresses per device on a shared bus.
 
 ### 4. Frontend (React)
 
@@ -258,7 +275,8 @@ See [backend/scripts/seed_demo_data.py](backend/scripts/seed_demo_data.py).
 
 | File | Variable | Purpose |
 |---|---|---|
-| `pi/.env` | `API_URL`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS` | Where/how the Pi sends readings |
+| `pi/linovision/.env` | `API_URL`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS`, `MODBUS_*` | Where/how the Linovision sensor sends readings |
+| `pi/thd/.env` | `API_URL`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS`, `MODBUS_*` | Where/how the THD sensor sends readings |
 | `backend/.env` | `DATABASE_URL`, `OLLAMA_API_KEY`, `CORS_ORIGINS` | DB connection, LLM key, allowed frontend origins |
 | `frontend/.env` | `VITE_API_URL` | Backend base URL for the website |
 

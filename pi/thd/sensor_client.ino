@@ -1,7 +1,8 @@
 /*
- * Arduino IDE (ESP32) equivalent of sensor_client.py.
- * Reads the Linovision IOT-S300WS8 8-in-1 weather sensor over RS485/Modbus
- * RTU on an interval and POSTs each reading to the backend ingestion API.
+ * Arduino IDE (ESP32) equivalent of thd_sensor_client.py.
+ * Reads the Autonics THD-WD1-T temperature/humidity sensor over
+ * RS485/Modbus RTU on an interval and POSTs each reading to the backend
+ * ingestion API.
  *
  * Required libraries (Arduino IDE > Tools > Manage Libraries):
  *   - ModbusMaster (by Doc Walker)
@@ -19,7 +20,7 @@
 #include <ArduinoJson.h>
 #include <ModbusMaster.h>
 
-// ---- Config (mirrors pi/.env.example) ----
+// ---- Config (mirrors pi/thd/.env.example) ----
 const char *WIFI_SSID = "your-wifi-ssid";
 const char *WIFI_PASSWORD = "your-wifi-password";
 
@@ -31,9 +32,9 @@ const char *API_URL = API_URL_CLOUDFLARE;
 const char *STATION_NAME = "";
 const unsigned long SAMPLE_INTERVAL_MS = 1000;
 
-// Manual's per-model default-address table lists S800 (8-in-1) as 46, not the
-// generic default of 1 -- confirm the real address on the device (USB config
-// tool, or ASCII command 0XA;MBAD=?) before trusting this value.
+// Factory default is 1 (upper address terminal OPEN, SW1=1) -- see the
+// manual's communication address setting table if this unit's rotary
+// switch/terminal has been set differently.
 const uint8_t MODBUS_SLAVE_ID = 1;
 const long MODBUS_BAUDRATE = 9600;
 
@@ -43,10 +44,10 @@ const long MODBUS_BAUDRATE = 9600;
 
 ModbusMaster modbus;
 
-// Input register addresses (word offsets), from the IOT-S300WS8 manual
-// section 4.1.2. Every field is a signed int32 spanning 2 registers
-// (big-endian), true value = raw / 1000. Same fields as LINOVISION_REGISTERS
-// in sensor_client.py -- extend both together if more fields are added.
+// Input register addresses from the THD manual's "Modbus mapping table"
+// (300001/300002 in Modicon 3xxxx convention, i.e. 0-indexed input
+// registers). Each value is a single 16-bit register, signed, true value =
+// raw * 0.01 -- unlike the Linovision sensor, these are NOT 32-bit pairs.
 struct RegisterField {
   const char *name;
   uint16_t address;
@@ -54,35 +55,9 @@ struct RegisterField {
 
 const RegisterField REGISTERS[] = {
   {"temperature_c", 0x0000},
-  {"humidity_pct", 0x0002},
-  {"pressure_hpa", 0x0004},  // manual reports Pa; converted to hPa below
-  {"wind_dir_deg", 0x000C},  // average wind direction
-  {"wind_speed_ms", 0x0012}, // average wind speed
-  {"pm2_5_ugm3", 0x0030},
-  {"pm10_ugm3", 0x0032},
-  {"noise_db", 0x0048},
+  {"humidity_pct", 0x0001},
 };
 const size_t REGISTER_COUNT = sizeof(REGISTERS) / sizeof(REGISTERS[0]);
-
-// The manual (section 4.1.2) requires PM2.5/PM10/noise to be read in
-// separate requests from the main block, and the gaps between them
-// (0x0020-0x002F, 0x0034-0x0047) are undefined -- a single request spanning
-// 0x0000-0x0049 both risks an illegal-address exception and overflows
-// ModbusMaster's 64-register response buffer. Read each contiguous block
-// separately instead, matching the manual's own reference reads (p.20-21):
-// the first block reads the whole defined 0x0000-0x001F run (temp through
-// dumping-of-state) even though we only use a subset of those fields.
-struct RegisterBlock {
-  uint16_t startAddress;
-  uint16_t count;
-};
-
-const RegisterBlock REGISTER_BLOCKS[] = {
-  {0x0000, 0x0020},  // temp, humidity, pressure, wind, rain, heating temp, dumping state
-  {0x0030, 0x0004},  // pm2_5, pm10
-  {0x0048, 0x0002},  // noise
-};
-const size_t REGISTER_BLOCK_COUNT = sizeof(REGISTER_BLOCKS) / sizeof(REGISTER_BLOCKS[0]);
 
 void preTransmission() {
   if (RS485_DE_PIN >= 0) digitalWrite(RS485_DE_PIN, HIGH);
@@ -92,9 +67,8 @@ void postTransmission() {
   if (RS485_DE_PIN >= 0) digitalWrite(RS485_DE_PIN, LOW);
 }
 
-int32_t decodeInt32(uint16_t high, uint16_t low) {
-  uint32_t value = ((uint32_t)high << 16) | low;
-  return (int32_t)value;
+int16_t decodeInt16(uint16_t raw) {
+  return (int16_t)raw;
 }
 
 void connectWiFi() {
@@ -107,31 +81,21 @@ void connectWiFi() {
   Serial.println(" connected");
 }
 
-// Reads each register block (see REGISTER_BLOCKS) in its own Modbus
-// request, then decodes each field's int32 out of the matching block's
-// response. Returns false (and leaves doc unchanged) on a Modbus error.
+// Reads temperature and humidity in one Modbus request (both registers are
+// contiguous, 0x0000-0x0001). Returns false (and leaves doc unchanged) on a
+// Modbus error.
 bool readSensors(JsonDocument &doc) {
-  for (size_t b = 0; b < REGISTER_BLOCK_COUNT; b++) {
-    const RegisterBlock &block = REGISTER_BLOCKS[b];
-
-    uint8_t result = modbus.readInputRegisters(block.startAddress, block.count);
-    if (result != modbus.ku8MBSuccess) {
-      Serial.printf("Modbus read error: 0x%02X\n", result);
-      return false;
-    }
-
-    for (size_t i = 0; i < REGISTER_COUNT; i++) {
-      uint16_t address = REGISTERS[i].address;
-      if (address < block.startAddress || address >= block.startAddress + block.count) continue;
-      uint16_t offset = address - block.startAddress;
-      uint16_t high = modbus.getResponseBuffer(offset);
-      uint16_t low = modbus.getResponseBuffer(offset + 1);
-      int32_t raw = decodeInt32(high, low);
-      doc[REGISTERS[i].name] = raw / 1000.0;
-    }
+  uint8_t result = modbus.readInputRegisters(0x0000, REGISTER_COUNT);
+  if (result != modbus.ku8MBSuccess) {
+    Serial.printf("Modbus read error: 0x%02X\n", result);
+    return false;
   }
 
-  doc["pressure_hpa"] = doc["pressure_hpa"].as<float>() / 100.0;  // Pa -> hPa
+  for (size_t i = 0; i < REGISTER_COUNT; i++) {
+    uint16_t raw = modbus.getResponseBuffer(REGISTERS[i].address);
+    doc[REGISTERS[i].name] = decodeInt16(raw) * 0.01;
+  }
+
   return true;
 }
 
@@ -175,7 +139,7 @@ void setup() {
   modbus.preTransmission(preTransmission);
   modbus.postTransmission(postTransmission);
 
-  Serial.printf("Starting sensor loop for station '%s' (interval=%lums)\n", STATION_NAME, SAMPLE_INTERVAL_MS);
+  Serial.printf("Starting THD sensor loop for station '%s' (interval=%lums)\n", STATION_NAME, SAMPLE_INTERVAL_MS);
 }
 
 void loop() {
