@@ -85,6 +85,24 @@ body {
   color: var(--assistant-bubble-ink);
 }
 
+.dropdown-menu {
+  background-color: var(--surface);
+  border-color: var(--border-hairline);
+}
+.dropdown-item {
+  color: var(--ink-primary);
+}
+.dropdown-item:hover,
+.dropdown-item:focus {
+  background-color: var(--page-plane);
+  color: var(--ink-primary);
+}
+.dropdown-item.active,
+.dropdown-item:active {
+  background-color: var(--accent) !important;
+  color: var(--accent-ink) !important;
+}
+
 .day-strip-scroll {
   scroll-snap-type: x proximity;
 }

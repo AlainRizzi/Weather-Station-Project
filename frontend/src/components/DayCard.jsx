@@ -71,7 +71,15 @@ export default function DayCard({ date }) {
   useEffect(() => {
     let active = true;
 
-    getReadingsInRange(date.startOf("day").toISOString(), date.endOf("day").toISOString(), {
+    // Build the UTC day window from the date's calendar fields directly,
+    // not date.startOf("day").toISOString() -- startOf("day") anchors to
+    // local midnight, and converting that to ISO shifts the window off by
+    // the browser's UTC offset (e.g. 9pm-to-9pm instead of midnight-to-
+    // midnight) even though the stored reading times are already UTC.
+    const dayStart = `${dateKey}T00:00:00.000Z`;
+    const dayEnd = `${dateKey}T23:59:59.999Z`;
+
+    getReadingsInRange(dayStart, dayEnd, {
       bucket: "1h",
     })
       .then((data) => {

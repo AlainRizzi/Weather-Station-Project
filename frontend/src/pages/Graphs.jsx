@@ -148,7 +148,20 @@ export default function Graphs() {
   useEffect(() => {
     let active = true;
 
-    getReadingsInRange(start.toISOString(), end.toISOString(), { bucket: rangeConfig.bucket })
+    // start/end are local-midnight-anchored dayjs objects (used for display
+    // and stepper comparisons below), but the API's day window must be the
+    // UTC calendar day, since that's what the stored reading times use --
+    // start.toISOString()/end.toISOString() would convert local midnight to
+    // UTC and shift the window by the browser's offset (e.g. 9pm-to-9pm).
+    // Build the request bounds from the calendar fields directly instead.
+    const rangeStart = rangeConfig.unit
+      ? `${start.format("YYYY-MM-DD")}T00:00:00.000Z`
+      : start.toISOString();
+    const rangeEnd = rangeConfig.unit
+      ? `${end.format("YYYY-MM-DD")}T23:59:59.999Z`
+      : end.toISOString();
+
+    getReadingsInRange(rangeStart, rangeEnd, { bucket: rangeConfig.bucket })
       .then((data) => {
         if (active) {
           setReadings(data);
@@ -300,6 +313,13 @@ export default function Graphs() {
                       dayjs(t).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
                     }
                     formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
+                    contentStyle={{
+                      backgroundColor: "var(--surface)",
+                      borderColor: "var(--border-hairline)",
+                      color: "var(--ink-primary)",
+                    }}
+                    labelStyle={{ color: "var(--ink-primary)" }}
+                    itemStyle={{ color: "var(--ink-primary)" }}
                   />
                   <Line
                     type="monotone"

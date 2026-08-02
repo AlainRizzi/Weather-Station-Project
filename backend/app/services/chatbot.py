@@ -34,6 +34,7 @@ Streaming:
 import json
 import logging
 import re
+from datetime import datetime, timezone
 
 from openai import OpenAI
 from sqlalchemy import text
@@ -103,6 +104,28 @@ def enforce_style(text: str) -> str:
     ]
     return "\n".join(fixed_lines).strip()
 
+# Shared, single source of truth for how every stage (classification, SQL
+# generation) resolves a short follow-up against conversation history. This
+# used to be a separately hand-written, drifting instruction in each prompt
+# below (patched repeatedly, once per bug report); it is now one general
+# rule both prompts include, so a future fix to "how follow-ups resolve"
+# only has to change one place instead of two.
+CONTEXT_RESOLUTION_RULE = """A message may be a short follow-up that only makes sense in light of
+the conversation history (e.g. "lowest?", "what about last month?", "and station 2?"),
+rather than a complete, self-contained question. Model every data question as a set of
+independent slots: STATION, METRIC, TIME RANGE, and AGGREGATE (avg/min/max/raw/etc.).
+A follow-up updates only the slot(s) it explicitly names; every other slot keeps
+whatever value was most recently established earlier in the conversation, and is
+never reset just because the follow-up doesn't repeat it. Resolve all slots against
+the full conversation history before acting on the latest message; never interpret
+it in isolation.
+For example: "give me july 31 temperature" establishes METRIC=temperature,
+TIME RANGE=july 31. "highest?" then changes only AGGREGATE=max, leaving METRIC and
+TIME RANGE unchanged, so the answer is the highest temperature ON JULY 31, not an
+all-time maximum. A further "lowest?" again changes only AGGREGATE, keeping the same
+METRIC and TIME RANGE. "What about last month?" changes only TIME RANGE, keeping the
+established METRIC."""
+
 CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent:
 - "small_talk": greetings, acknowledgments, thanks, or other conversational chatter with no
   information request (e.g. "hello", "thanks", "okay perfect", "great, thank you").
@@ -110,13 +133,10 @@ CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent
 - "data_question": a question asking about actual sensor readings or historical data.
 - "unclear": anything else that doesn't fit the categories above, or is too vague to act on.
 
-The message may be a short follow-up that only makes sense in light of the
-conversation so far (e.g. "lowest" after a question about highest humidity,
-or "what about wind?" after a data question). Read the conversation history
-first and interpret the latest message as a continuation of it before
-classifying: if the history shows the conversation was about sensor data,
-prefer "data_question" over "unclear" for a short follow-up. Only classify
-as "unclear" if the message is still ambiguous after considering the history.
+{CONTEXT_RESOLUTION_RULE}
+If, once resolved against the history, the message asks about sensor data, classify
+it as "data_question" even when it is short (e.g. a bare "lowest?" or "noise?").
+Only classify as "unclear" if it is still ambiguous after considering the history.
 
 Respond with ONLY a JSON object: {{"intent": "<one of {list(INTENTS)}>"}}"""
 
@@ -125,7 +145,10 @@ TOO_BROAD_SENTINEL = "TOO_BROAD"
 RAW_ROW_LIMIT = 5
 AGGREGATE_ROW_LIMIT = 100
 
-SQL_SYSTEM_PROMPT = f"""You are a SQL generator for a PostgreSQL weather database.
+SQL_SYSTEM_PROMPT_TEMPLATE = f"""You are a SQL generator for a PostgreSQL weather database.
+The current date and time is {{now}}. Resolve any relative or year-less date the
+user gives (e.g. "July 30", "yesterday", "last week") against this current date,
+never against a guessed or remembered year.
 Schema:
 {SCHEMA_DESCRIPTION}
 
@@ -147,11 +170,9 @@ Rules:
   aggregate collapses to a single row.
 - Use time-bucketing (date_trunc) for "per day/week" style questions.
 - Default to the most recent station if none is named.
-- The latest message may be a short follow-up that only makes sense in light
-  of the conversation history (e.g. "lowest" after a question about highest
-  humidity means "lowest humidity"; "what about last month?" reuses the
-  metric from the prior question with a new time range). Resolve the message
-  against the conversation history before generating SQL.
+- {CONTEXT_RESOLUTION_RULE}
+  Generate SQL from the fully resolved slots (station, metric, time range,
+  aggregate), never from the latest message read in isolation.
 - If the user asks for raw readings over a broad window (e.g. "all raw data",
   "every reading for the past hour/day/week", "dump the whole table") or an
   aggregate over a window wider than about {AGGREGATE_ROW_LIMIT} buckets,
@@ -386,8 +407,9 @@ def answer_data_question(message: str, db: Session, history: list[tuple[str, str
 
 
 def generate_sql(message: str, history: list[tuple[str, str]] = [], feedback: str | None = None) -> str:
+    now = datetime.now(timezone.utc).strftime("%A, %B %-d, %Y, %H:%M UTC")
     messages = [
-        {"role": "system", "content": SQL_SYSTEM_PROMPT},
+        {"role": "system", "content": SQL_SYSTEM_PROMPT_TEMPLATE.format(now=now)},
         *history_to_messages(history),
         {"role": "user", "content": message},
     ]
