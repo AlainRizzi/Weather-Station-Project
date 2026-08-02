@@ -70,12 +70,45 @@ Table: stations
   - created_at  TIMESTAMPTZ  -- when the station was registered
 """
 
+# Matches frontend/src/metrics.js -- the one source of truth for which unit
+# each sensor column is recorded in, given to the SQL generator so it aliases
+# result columns with the unit baked in (e.g. avg_temperature_c), instead of
+# leaving the summarizer to guess a unit from an arbitrary alias afterward.
+COLUMN_UNITS = {
+    "temperature_c": "°C",
+    "humidity_pct": "%",
+    "pressure_hpa": "hPa",
+    "wind_speed_ms": "m/s",
+    "wind_dir_deg": "°",
+    "noise_db": "dB",
+    "pm2_5_ugm3": "µg/m³",
+    "pm10_ugm3": "µg/m³",
+}
+COLUMN_UNITS_DESCRIPTION = "\n".join(f"  - {col}: {unit}" for col, unit in COLUMN_UNITS.items())
+
 STATION_FACTS = """
 This weather station is a Raspberry Pi based setup that measures temperature,
 humidity, atmospheric pressure, wind speed/direction, noise level, and
 PM2.5/PM10 particulate matter concentration once per second, and streams the
 readings to a cloud database in real time. Users can ask this chatbot
 questions about the station's recorded data in natural language.
+
+What each measured metric is:
+- Temperature (°C): the air temperature at the station.
+- Humidity (%): relative humidity, how much moisture the air is holding
+  relative to the maximum it could hold at that temperature.
+- Pressure (hPa): atmospheric (barometric) pressure at the station.
+- Wind speed (m/s): how fast the air is moving.
+- Wind direction (°): the compass direction the wind is blowing FROM, in
+  degrees (0/360 = north, 90 = east, 180 = south, 270 = west).
+- Noise (dB): ambient sound level in decibels.
+- PM2.5 (µg/m³): concentration of fine airborne particulate matter 2.5
+  micrometers or smaller in diameter, small enough to be inhaled deep into
+  the lungs (e.g. from smoke, vehicle exhaust, dust). Higher values mean
+  worse air quality.
+- PM10 (µg/m³): concentration of airborne particulate matter 10 micrometers
+  or smaller in diameter (a broader size range than PM2.5, includes things
+  like pollen and larger dust). Higher values mean worse air quality.
 """
 
 SMALL_TALK_PATTERNS = re.compile(
@@ -84,7 +117,8 @@ SMALL_TALK_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 STATION_INFO_PATTERNS = re.compile(
-    r"\b(what (are|is) you|who are you|what do you do|tell me about (this|the) station|how does (this|the) station work|what.*(this )?(app|application) (do|for))\b",
+    r"\b(what (are|is) you|who are you|what do you do|tell me about (this|the) station|how does (this|the) station work|what.*(this )?(app|application) (do|for)"
+    r"|what (is|are|does).*(mean|measure)|pm ?2\.?5|pm ?10\b)\b",
     re.IGNORECASE,
 )
 
@@ -111,31 +145,41 @@ def enforce_style(text: str) -> str:
 # rule both prompts include, so a future fix to "how follow-ups resolve"
 # only has to change one place instead of two.
 CONTEXT_RESOLUTION_RULE = """A message may be a short follow-up that only makes sense in light of
-the conversation history (e.g. "lowest?", "what about last month?", "and station 2?"),
-rather than a complete, self-contained question. Model every data question as a set of
-independent slots: STATION, METRIC, TIME RANGE, and AGGREGATE (avg/min/max/raw/etc.).
-A follow-up updates only the slot(s) it explicitly names; every other slot keeps
-whatever value was most recently established earlier in the conversation, and is
-never reset just because the follow-up doesn't repeat it. Resolve all slots against
-the full conversation history before acting on the latest message; never interpret
-it in isolation.
-For example: "give me july 31 temperature" establishes METRIC=temperature,
-TIME RANGE=july 31. "highest?" then changes only AGGREGATE=max, leaving METRIC and
-TIME RANGE unchanged, so the answer is the highest temperature ON JULY 31, not an
-all-time maximum. A further "lowest?" again changes only AGGREGATE, keeping the same
-METRIC and TIME RANGE. "What about last month?" changes only TIME RANGE, keeping the
-established METRIC."""
+the conversation history, rather than a complete, self-contained question. There are three
+kinds of follow-up, and none of them can be judged on their own text alone -- always read the
+conversation history first:
+1. SLOT CHANGE: modifies part of the previous data question. Model every data question as a
+   set of independent slots: STATION, METRIC, TIME RANGE, and AGGREGATE (avg/min/max/raw/etc).
+   The follow-up updates only the slot(s) it explicitly names; every other slot keeps
+   whatever value was most recently established earlier in the conversation, and is never
+   reset just because the follow-up doesn't repeat it.
+   Example: "give me july 31 temperature" establishes METRIC=temperature, TIME RANGE=july 31.
+   "highest?" then changes only AGGREGATE=max, leaving METRIC and TIME RANGE unchanged, so the
+   answer is the highest temperature ON JULY 31, not an all-time maximum. "What about last
+   month?" changes only TIME RANGE, keeping the established METRIC.
+2. REPEAT: asks to redo the previous data question unchanged (e.g. "retry", "try again",
+   "one more time"). Treat this exactly like the previous data question, with all slots kept
+   as they were.
+3. CLARIFY: asks about the previous answer itself rather than requesting new data (e.g.
+   "when?", "which station was that?", "what units?"). Answer using the slots already
+   established for the previous data question -- do not treat it as unclear just because it
+   names no metric or time range of its own.
+In all three cases, resolve the message against the full conversation history before acting;
+never interpret it in isolation from what came before."""
 
 CLASSIFY_SYSTEM_PROMPT = f"""Classify the user's message into exactly one intent:
 - "small_talk": greetings, acknowledgments, thanks, or other conversational chatter with no
   information request (e.g. "hello", "thanks", "okay perfect", "great, thank you").
-- "station_info": a question about what this chatbot or weather station is/does/can do.
+- "station_info": a question about what this chatbot or weather station is/does/can do, or
+  what one of its measured metrics means/is (e.g. "what is PM2.5", "what does humidity mean",
+  "what unit is pressure in") -- a definition question, not a request for recorded data.
 - "data_question": a question asking about actual sensor readings or historical data.
 - "unclear": anything else that doesn't fit the categories above, or is too vague to act on.
 
 {CONTEXT_RESOLUTION_RULE}
-If, once resolved against the history, the message asks about sensor data, classify
-it as "data_question" even when it is short (e.g. a bare "lowest?" or "noise?").
+If, once resolved against the history, the message is a slot change, a repeat, or a
+clarification of a prior data question, classify it as "data_question" even when it
+is short and names no metric or time range of its own (e.g. "lowest?", "retry", "when?").
 Only classify as "unclear" if it is still ambiguous after considering the history.
 
 Respond with ONLY a JSON object: {{"intent": "<one of {list(INTENTS)}>"}}"""
@@ -151,11 +195,17 @@ user gives (e.g. "July 30", "yesterday", "last week") against this current date,
 never against a guessed or remembered year.
 Schema:
 {SCHEMA_DESCRIPTION}
+Units (each column is always recorded in this unit, never any other):
+{COLUMN_UNITS_DESCRIPTION}
 
 Rules:
 - Output ONLY a single read-only SQL SELECT statement, nothing else — no
   explanation, no markdown fences, no commentary before or after.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML.
+- Always alias every selected/aggregated column so the base column name is
+  still visible in the alias (e.g. AVG(temperature_c) AS avg_temperature_c,
+  not AS avg_temp or AS result) — the unit is looked up from that base column
+  name afterward, so an alias that drops or renames it loses the unit.
 - readings has one row per station per second, so it grows very large.
   Raw (non-aggregated) queries — selecting individual reading rows rather
   than a GROUP BY summary — must almost always include a LIMIT of at most
@@ -432,17 +482,42 @@ def validate_readonly(sql: str) -> None:
         raise ValueError("Generated query contains a forbidden keyword")
 
 
+def units_for_columns(columns: list[str]) -> dict[str, str]:
+    """Map each result column to its real unit by matching it against
+    COLUMN_UNITS's keys, since the SQL generator is instructed to keep the
+    base column name inside its alias (e.g. avg_temperature_c) but may still
+    vary case or add prefixes/suffixes around it."""
+    units = {}
+    for column in columns:
+        for base_column, unit in COLUMN_UNITS.items():
+            if base_column in column.lower():
+                units[column] = unit
+                break
+    return units
+
+
 def summarize_results(message: str, columns: list[str], rows: list):
+    units = units_for_columns(columns)
+    units_line = (
+        "Units for these columns (state them exactly, never invent or guess a "
+        f"different unit): {units}."
+        if units
+        else "None of these columns has a known physical unit; do not invent one."
+    )
+
     if len(rows) == 1:
-        style_instruction = "Summarize the single result row in one short, friendly sentence for a non-technical user. Include the relevant numbers and units."
+        style_instruction = (
+            "Summarize the single result row in one short, friendly sentence for a "
+            f"non-technical user. Include the relevant numbers and units. {units_line}"
+        )
     else:
         style_instruction = (
             f"The query returned {len(rows)} rows. Present EVERY row, not just one, as a "
             "markdown table (GitHub-flavored markdown pipe table) with one column per "
             "field and one row per result row. Use short column headers with units in "
-            "parentheses (e.g. 'Temp (C)'). Round numbers to 1-2 decimal places. Output "
-            "ONLY the markdown table, no surrounding prose. Do not collapse multiple rows "
-            "into a single summary sentence."
+            f"parentheses taken from the mapping below, e.g. 'Temp (°C)'. {units_line} "
+            "Round numbers to 1-2 decimal places. Output ONLY the markdown table, no "
+            "surrounding prose. Do not collapse multiple rows into a single summary sentence."
         )
 
     messages = [

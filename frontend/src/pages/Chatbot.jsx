@@ -49,11 +49,33 @@ export default function Chatbot() {
   const [stageLabel, setStageLabel] = useState(DEFAULT_STAGE_LABEL);
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Navigating away mid-reply must NOT cancel the request -- the reply
+  // should keep generating in the background so it's there when the user
+  // comes back. Only stop touching React state after unmount (it can't
+  // render anyway); still write every update straight to sessionStorage so
+  // the finished reply is picked up by loadMessages() next time this page
+  // mounts.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  function persistMessages(updater) {
+    const current = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null") ?? [GREETING];
+    const next = updater(current);
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    if (mountedRef.current) setMessages(next);
+    return next;
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -65,14 +87,14 @@ export default function Chatbot() {
       .map(({ role, text }) => ({ role, text }));
 
     const assistantId = crypto.randomUUID();
-    setMessages((prev) => [...prev, { role: "user", text, time: Date.now() }]);
+    persistMessages((prev) => [...prev, { role: "user", text, time: Date.now() }]);
     setInput("");
     setStageLabel(DEFAULT_STAGE_LABEL);
     setStreaming(false);
     setLoading(true);
 
     function upsertAssistantMessage(updateText) {
-      setMessages((prev) => {
+      persistMessages((prev) => {
         const index = prev.findIndex((m) => m.id === assistantId);
         if (index === -1) {
           return [...prev, { id: assistantId, role: "assistant", text: updateText(""), time: Date.now() }];
@@ -86,27 +108,29 @@ export default function Chatbot() {
     try {
       await streamChatMessage(text, history, (event) => {
         if (event.type === "stage") {
-          setStageLabel(STAGE_LABELS[event.stage] ?? DEFAULT_STAGE_LABEL);
+          if (mountedRef.current) setStageLabel(STAGE_LABELS[event.stage] ?? DEFAULT_STAGE_LABEL);
         } else if (event.type === "token") {
-          setStreaming(true);
+          if (mountedRef.current) setStreaming(true);
           upsertAssistantMessage((prevText) => prevText + event.text);
         } else if (event.type === "done") {
           upsertAssistantMessage(() => event.reply);
         } else if (event.type === "error") {
-          setMessages((prev) => [
+          persistMessages((prev) => [
             ...prev,
             { role: "error", text: event.message || "Sorry, something went wrong answering that.", time: Date.now() },
           ]);
         }
       });
     } catch {
-      setMessages((prev) => [
+      persistMessages((prev) => [
         ...prev,
         { role: "error", text: "Sorry, something went wrong answering that.", time: Date.now() },
       ]);
     } finally {
-      setLoading(false);
-      setStreaming(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setStreaming(false);
+      }
     }
   }
 
