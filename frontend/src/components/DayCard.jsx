@@ -48,29 +48,33 @@ function average(values) {
 }
 
 export default function DayCard({ date }) {
+  const dateKey = date.format("YYYY-MM-DD");
   const [result, setResult] = useState(null); // { forDate, readings, error }
-  const loaded = result?.forDate === date.format("YYYY-MM-DD");
+  const loaded = result?.forDate === dateKey;
   const readings = loaded ? result.readings : null;
   const error = loaded ? result.error : null;
 
   useEffect(() => {
     let active = true;
-    const forDate = date.format("YYYY-MM-DD");
 
     getReadingsInRange(date.startOf("day").toISOString(), date.endOf("day").toISOString(), {
       bucket: "1h",
     })
       .then((data) => {
-        if (active) setResult({ forDate, readings: data, error: null });
+        if (active) setResult({ forDate: dateKey, readings: data, error: null });
       })
       .catch((e) => {
-        if (active) setResult({ forDate, readings: null, error: e.message });
+        if (active) setResult({ forDate: dateKey, readings: null, error: e.message });
       });
 
     return () => {
       active = false;
     };
-  }, [date]);
+    // Depend on the date's string key, not the dayjs object reference --
+    // a new dayjs instance representing the same calendar day must not
+    // re-trigger this fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateKey]);
 
   const averages = useMemo(() => {
     if (!readings) return null;

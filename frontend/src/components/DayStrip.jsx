@@ -1,27 +1,27 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import dayjs from "dayjs";
 
 import DayCard from "./DayCard.jsx";
 
-const INITIAL_DAYS = 7;
-const LOAD_MORE_DAYS = 7;
+const VISIBLE_DAYS = 7;
 // How close to the right edge (px) counts as "still at today" for showing/hiding
 // the snap-back button.
 const AT_TODAY_THRESHOLD_PX = 24;
 
 export default function DayStrip() {
-  const today = dayjs().startOf("day");
-  const [daysBack, setDaysBack] = useState(INITIAL_DAYS - 1);
   const [showTodayButton, setShowTodayButton] = useState(false);
   const scrollRef = useRef(null);
-  // scrollWidth right before daysBack changes, so the layout effect can
-  // compare against it once the new cards have actually been committed.
-  const prevScrollWidthRef = useRef(null);
 
   // Oldest-to-newest, today last -- rendered left-to-right so today sits at
-  // the right edge.
-  const dates = Array.from({ length: daysBack + 1 }, (_, i) => today.subtract(daysBack - i, "day"));
+  // the right edge. Memoized so each DayCard gets a referentially stable
+  // `date` prop across re-renders (e.g. from scroll events) -- otherwise
+  // every render hands DayCard a brand-new dayjs object, which its fetch
+  // effect would see as "changed" and re-fetch for no reason.
+  const dates = useMemo(() => {
+    const today = dayjs().startOf("day");
+    return Array.from({ length: VISIBLE_DAYS }, (_, i) => today.subtract(VISIBLE_DAYS - 1 - i, "day"));
+  }, []);
 
   function scrollToToday(behavior = "smooth") {
     const el = scrollRef.current;
@@ -34,27 +34,11 @@ export default function DayStrip() {
     scrollToToday("auto");
   }, []);
 
-  // Runs after the DOM has actually been updated with the new (older) cards
-  // -- unlike requestAnimationFrame, this is guaranteed to see the committed
-  // layout, so the scroll correction can't race React's render.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el || prevScrollWidthRef.current === null) return;
-    const delta = el.scrollWidth - prevScrollWidthRef.current;
-    if (delta !== 0) el.scrollLeft += delta;
-    prevScrollWidthRef.current = null;
-  }, [daysBack]);
-
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
     const distanceFromRight = el.scrollWidth - el.scrollLeft - el.clientWidth;
     setShowTodayButton(distanceFromRight > AT_TODAY_THRESHOLD_PX);
-  }
-
-  function loadMore() {
-    prevScrollWidthRef.current = scrollRef.current?.scrollWidth ?? 0;
-    setDaysBack((d) => d + LOAD_MORE_DAYS);
   }
 
   return (
@@ -73,11 +57,6 @@ export default function DayStrip() {
         className="d-flex gap-3 pb-2 day-strip-scroll"
         style={{ overflowX: "auto" }}
       >
-        <div className="d-flex align-items-center flex-shrink-0">
-          <Button variant="outline-secondary" size="sm" onClick={loadMore}>
-            Load 7 more
-          </Button>
-        </div>
         {dates.map((date) => (
           <DayCard key={date.format("YYYY-MM-DD")} date={date} />
         ))}

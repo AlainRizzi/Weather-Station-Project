@@ -122,6 +122,9 @@ Respond with ONLY a JSON object: {{"intent": "<one of {list(INTENTS)}>"}}"""
 
 TOO_BROAD_SENTINEL = "TOO_BROAD"
 
+RAW_ROW_LIMIT = 5
+AGGREGATE_ROW_LIMIT = 100
+
 SQL_SYSTEM_PROMPT = f"""You are a SQL generator for a PostgreSQL weather database.
 Schema:
 {SCHEMA_DESCRIPTION}
@@ -130,8 +133,18 @@ Rules:
 - Output ONLY a single read-only SQL SELECT statement, nothing else — no
   explanation, no markdown fences, no commentary before or after.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, or any DDL/DML.
-- Always include a LIMIT (max 1000) unless the query is an aggregate that
-  returns one row.
+- readings has one row per station per second, so it grows very large.
+  Raw (non-aggregated) queries — selecting individual reading rows rather
+  than a GROUP BY summary — must almost always include a LIMIT of at most
+  {RAW_ROW_LIMIT} and should target only a very recent, narrow window (e.g.
+  "the last few readings", "the most recent reading a few minutes ago") —
+  never a broad raw window like "the past hour" or "the past day" of
+  individual rows.
+- Aggregate queries (GROUP BY / date_trunc bucketing, e.g. daily or hourly
+  averages) may return up to {AGGREGATE_ROW_LIMIT} rows — e.g. daily
+  averages over about {AGGREGATE_ROW_LIMIT} days (a bit over 3 months), or
+  hourly averages over about 4 days. Always include a LIMIT unless the
+  aggregate collapses to a single row.
 - Use time-bucketing (date_trunc) for "per day/week" style questions.
 - Default to the most recent station if none is named.
 - The latest message may be a short follow-up that only makes sense in light
@@ -139,10 +152,10 @@ Rules:
   humidity means "lowest humidity"; "what about last month?" reuses the
   metric from the prior question with a new time range). Resolve the message
   against the conversation history before generating SQL.
-- readings has one row per station per second, so it grows very large. If the
-  user asks for all raw readings with no meaningful time bound or filter (e.g.
-  "show me all the data", "every reading ever recorded", "dump the whole
-  table"), do NOT generate a query. Instead output exactly: {TOO_BROAD_SENTINEL}
+- If the user asks for raw readings over a broad window (e.g. "all raw data",
+  "every reading for the past hour/day/week", "dump the whole table") or an
+  aggregate over a window wider than about {AGGREGATE_ROW_LIMIT} buckets,
+  do NOT generate a query. Instead output exactly: {TOO_BROAD_SENTINEL}
 """
 
 FORBIDDEN_SQL = re.compile(
@@ -287,7 +300,12 @@ def classify_and_reply(message: str, db: Session, history: list[tuple[str, str]]
     return result
 
 
-MAX_ROWS = 1000
+GROUP_BY_PATTERN = re.compile(r"\bgroup\s+by\b", re.IGNORECASE)
+
+
+def row_limit_for(sql: str) -> int:
+    """Raw per-reading queries get a much tighter cap than bucketed aggregates."""
+    return AGGREGATE_ROW_LIMIT if GROUP_BY_PATTERN.search(sql) else RAW_ROW_LIMIT
 
 
 def reply_to_too_broad(message: str):
@@ -296,12 +314,21 @@ def reply_to_too_broad(message: str):
             "role": "system",
             "content": (
                 "You are the assistant for a weather station app. Readings are recorded "
-                "once per second per station, so the user's request below would require "
-                "returning an unbounded/huge amount of raw data. Explain that to the user "
-                "referencing what they specifically asked for, then propose 2-3 concrete "
-                "narrower alternatives based on their exact wording (e.g. a specific time "
-                f"range, a specific station, or an aggregate like an average/max/min instead "
-                f"of raw rows). {STYLE_RULE}"
+                "every 30 seconds per station, so the user's request below would return too "
+                "much data. Explain that to the user referencing what they specifically asked "
+                "for, then propose 2-3 concrete narrower alternatives that this system can "
+                f"actually satisfy — you MUST stay within these hard limits, do not suggest "
+                f"anything broader:\n"
+                f"- Raw (individual, non-aggregated) readings: at most {RAW_ROW_LIMIT} rows, "
+                f"so only offer something like \"the most recent reading\" or \"the last "
+                f"{RAW_ROW_LIMIT} readings\" (a couple of minutes at most) — never a raw window "
+                f"like \"the past hour\" or \"the past day.\"\n"
+                f"- Aggregated data (an average/min/max per hour or day): up to "
+                f"{AGGREGATE_ROW_LIMIT} rows, e.g. daily averages over about "
+                f"{AGGREGATE_ROW_LIMIT} days (roughly 3 months) or hourly averages over about "
+                f"4 days.\n"
+                f"Prefer the aggregate option when the user's original time range was long. "
+                f"{STYLE_RULE}"
             ),
         },
         {"role": "user", "content": message},
@@ -332,14 +359,16 @@ def answer_data_question(message: str, db: Session, history: list[tuple[str, str
             feedback = f"The previous query:\n{sql}\nfailed with error: {e}. Fix it."
             continue
 
-        if count > MAX_ROWS:
+        max_rows = row_limit_for(sql)
+        if count > max_rows:
             if attempt == MAX_ATTEMPTS - 1:
                 reply = yield from reply_to_too_broad(message)
                 return {"intent": "sql_query", "reply": reply, "sql": None}
             feedback = (
                 f"The previous query:\n{sql}\nwould return {count} rows, which is too many "
-                f"(max {MAX_ROWS}). Rewrite it as an aggregate (e.g. an average/min/max per "
-                "hour/day/week) or narrow the time range instead of returning raw rows."
+                f"(max {max_rows} for {'an aggregate' if max_rows == AGGREGATE_ROW_LIMIT else 'a raw reading'} "
+                f"query). Rewrite it as a coarser aggregate (e.g. daily instead of hourly buckets) or narrow "
+                "the time range."
             )
             continue
 

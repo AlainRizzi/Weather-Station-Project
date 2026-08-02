@@ -252,35 +252,37 @@ export default function Graphs() {
             </Alert>
           )}
           {!error && readings && data.length > 0 && (
-            <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={data}>
-                <CartesianGrid strokeDasharray="0" stroke={GRID_COLOR} vertical={false} />
-                <XAxis
-                  dataKey="time"
-                  tickFormatter={(t) =>
-                    dayjs(t).format(range === "24h" ? "HH:mm" : range === "30d" ? "MMM D" : "MMM D HH:mm")
-                  }
-                  minTickGap={40}
-                />
-                <YAxis unit={metric.unit} domain={["auto", "auto"]} />
-                <Tooltip
-                  cursor={{ stroke: CROSSHAIR_COLOR, strokeWidth: 1 }}
-                  labelFormatter={(t) =>
-                    dayjs(t).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
-                  }
-                  formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke={LINE_COLOR}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  dot={false}
-                  name={metric.label}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <div style={{ width: "100%", overflow: "hidden" }}>
+              <ResponsiveContainer width="100%" height={400}>
+                <LineChart data={data} margin={{ top: 5, right: 8, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="0" stroke={GRID_COLOR} vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    tickFormatter={(t) =>
+                      dayjs(t).format(range === "24h" ? "HH:mm" : range === "30d" ? "MMM D" : "MMM D HH:mm")
+                    }
+                    minTickGap={40}
+                  />
+                  <YAxis unit={metric.unit} domain={["auto", "auto"]} width={56} tick={{ fontSize: 12 }} />
+                  <Tooltip
+                    cursor={{ stroke: CROSSHAIR_COLOR, strokeWidth: 1 }}
+                    labelFormatter={(t) =>
+                      dayjs(t).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
+                    }
+                    formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke={LINE_COLOR}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    dot={false}
+                    name={metric.label}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </Card.Body>
       </Card>
