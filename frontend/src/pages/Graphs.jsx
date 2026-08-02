@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, ButtonGroup, ToggleButton, Card, Form, Row, Col, Spinner } from "react-bootstrap";
-import { ChevronLeft, ChevronRight } from "react-bootstrap-icons";
+import { Alert, Button, ButtonGroup, ToggleButton, Card, Dropdown, Row, Col, Spinner } from "react-bootstrap";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Thermometer,
+  Droplet,
+  Speedometer2,
+  Wind,
+  Compass,
+  VolumeUp,
+  CloudHaze2,
+} from "react-bootstrap-icons";
 import {
   ResponsiveContainer,
   LineChart,
@@ -17,20 +27,39 @@ import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
 
 const RANGES = [
-  { key: "24h", label: "Last 24h", unit: "day" },
-  { key: "7d", label: "Last 7 days", unit: "week" },
-  { key: "30d", label: "Last 30 days", hours: 24 * 30 },
+  { key: "24h", label: "Last 24h", unit: "day", bucket: "1m" },
+  { key: "7d", label: "Last 7 days", unit: "week", bucket: "1h" },
+  { key: "30d", label: "Last 30 days", hours: 24 * 30, bucket: "1d" },
 ];
+
+const METRIC_ICONS = {
+  temperature_c: <Thermometer />,
+  humidity_pct: <Droplet />,
+  pressure_hpa: <Speedometer2 />,
+  wind_speed_ms: <Wind />,
+  wind_dir_deg: <Compass />,
+  noise_db: <VolumeUp />,
+  pm2_5_ugm3: <CloudHaze2 />,
+  pm10_ugm3: <CloudHaze2 />,
+};
+
+const LINE_COLOR = "#2a78d6";
+const GRID_COLOR = "#e1e0d9";
+const CROSSHAIR_COLOR = "#c3c2b7";
 
 export default function Graphs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const metricKey = METRICS.some((m) => m.key === searchParams.get("metric"))
     ? searchParams.get("metric")
     : METRICS[0].key;
-  const [range, setRange] = useState(RANGES[0].key);
+  const initialRange = RANGES.some((r) => r.key === searchParams.get("range"))
+    ? searchParams.get("range")
+    : RANGES[0].key;
+  const initialBack = Number.parseInt(searchParams.get("back"), 10);
+  const [range, setRange] = useState(initialRange);
   // How many periods back from "now" the 24h/7d steppers are showing.
   // 0 = today / this week, 1 = yesterday / last week, etc.
-  const [periodsBack, setPeriodsBack] = useState(0);
+  const [periodsBack, setPeriodsBack] = useState(Number.isInteger(initialBack) && initialBack >= 0 ? initialBack : 0);
   const [readings, setReadings] = useState(null);
   const [error, setError] = useState(null);
 
@@ -57,7 +86,7 @@ export default function Graphs() {
   useEffect(() => {
     let active = true;
 
-    getReadingsInRange(start.toISOString(), end.toISOString())
+    getReadingsInRange(start.toISOString(), end.toISOString(), { bucket: rangeConfig.bucket })
       .then((data) => {
         if (active) {
           setReadings(data);
@@ -71,7 +100,7 @@ export default function Graphs() {
     return () => {
       active = false;
     };
-  }, [start, end]);
+  }, [start, end, rangeConfig.bucket]);
 
   const data = useMemo(() => {
     if (!readings) return [];
@@ -95,13 +124,20 @@ export default function Graphs() {
 
       <Row className="mb-3 g-2">
         <Col md={6}>
-          <Form.Select value={metricKey} onChange={(e) => setMetricKey(e.target.value)}>
-            {METRICS.map((m) => (
-              <option key={m.key} value={m.key}>
-                {m.label}
-              </option>
-            ))}
-          </Form.Select>
+          <Dropdown onSelect={(key) => key && setMetricKey(key)}>
+            <Dropdown.Toggle variant="outline-secondary" className="w-100 text-start d-flex align-items-center">
+              <span className="me-2">{METRIC_ICONS[metricKey]}</span>
+              {metric.label}
+            </Dropdown.Toggle>
+            <Dropdown.Menu className="w-100">
+              {METRICS.map((m) => (
+                <Dropdown.Item key={m.key} eventKey={m.key} active={m.key === metricKey}>
+                  <span className="me-2">{METRIC_ICONS[m.key]}</span>
+                  {m.label}
+                </Dropdown.Item>
+              ))}
+            </Dropdown.Menu>
+          </Dropdown>
         </Col>
         <Col md={6}>
           <ButtonGroup className="w-100">
@@ -185,7 +221,7 @@ export default function Graphs() {
           {!error && readings && data.length > 0 && (
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" />
+                <CartesianGrid strokeDasharray="0" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="time"
                   tickFormatter={(t) => dayjs(t).format(range === "24h" ? "HH:mm" : "MMM D HH:mm")}
@@ -193,10 +229,19 @@ export default function Graphs() {
                 />
                 <YAxis unit={metric.unit} domain={["auto", "auto"]} />
                 <Tooltip
+                  cursor={{ stroke: CROSSHAIR_COLOR, strokeWidth: 1 }}
                   labelFormatter={(t) => dayjs(t).format("MMM D, YYYY HH:mm:ss")}
-                  formatter={(value) => [`${value} ${metric.unit}`, metric.label]}
+                  formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
                 />
-                <Line type="monotone" dataKey="value" stroke="#0d6efd" dot={false} name={metric.label} />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={LINE_COLOR}
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  dot={false}
+                  name={metric.label}
+                />
               </LineChart>
             </ResponsiveContainer>
           )}

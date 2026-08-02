@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import dayjs from "dayjs";
 
 import { getLatestReading } from "../api/client.js";
+import DayStrip from "../components/DayStrip.jsx";
 
 function StatCard({ icon, label, value, unit, metricKey }) {
   return (
@@ -56,6 +57,10 @@ export default function Dashboard() {
         <StatCard icon={<CloudHaze2 />} label="PM2.5" value={reading.pm2_5_ugm3} unit="µg/m³" metricKey="pm2_5_ugm3" />
         <StatCard icon={<CloudHaze2 />} label="PM10" value={reading.pm10_ugm3} unit="µg/m³" metricKey="pm10_ugm3" />
       </Row>
+
+      <div className="mt-4">
+        <DayStrip />
+      </div>
     </>
   );
 }

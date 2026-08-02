@@ -15,8 +15,10 @@ export function getLatestReading(stationId = 1) {
   return request(`/stats/latest?station_id=${stationId}`);
 }
 
-export function getReadingsInRange(start, end, stationId = 1) {
-  return request(`/stats/range?start=${start}&end=${end}&station_id=${stationId}`);
+export function getReadingsInRange(start, end, { bucket, stationId = 1 } = {}) {
+  const params = new URLSearchParams({ start, end, station_id: stationId });
+  if (bucket) params.set("bucket", bucket);
+  return request(`/stats/range?${params.toString()}`);
 }
 
 export async function streamChatMessage(message, history = [], onEvent) {
