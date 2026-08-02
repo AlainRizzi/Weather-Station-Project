@@ -159,6 +159,13 @@ export default function Graphs() {
               <ChevronRight />
             </Button>
           </Col>
+          {periodsBack !== 0 && (
+            <Col xs="auto">
+              <Button variant="outline-secondary" size="sm" onClick={() => setPeriodsBack(0)}>
+                {rangeConfig.unit === "day" ? "Today" : "This week"}
+              </Button>
+            </Col>
+          )}
         </Row>
       )}
 
