@@ -112,7 +112,6 @@ export default function Chatbot() {
 
   return (
     <>
-      <h1 className="mb-3">Ask the Station</h1>
       <Card className="mb-3 shadow-sm chat-card">
         <Card.Body className="d-flex flex-column gap-2 chat-card-body" style={{ overflowY: "auto" }}>
           {messages.map((m, i) => (

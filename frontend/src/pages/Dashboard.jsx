@@ -43,7 +43,6 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1 className="mb-1">Station Overview</h1>
       <p className="text-muted">
         Last updated {dayjs(reading.time).format("MMM D, YYYY HH:mm:ss")}
       </p>

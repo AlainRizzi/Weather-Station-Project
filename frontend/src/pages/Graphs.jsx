@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, ButtonGroup, ToggleButton, Card, Dropdown, Row, Col, Spinner } from "react-bootstrap";
+import { Alert, Button, ToggleButton, Card, Dropdown, Row, Col, Spinner } from "react-bootstrap";
 import {
   ChevronLeft,
   ChevronRight,
@@ -25,6 +25,7 @@ import { useSearchParams } from "react-router";
 
 import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
+import { useTheme } from "../theme/ThemeContext.jsx";
 
 const RANGES = [
   { key: "24h", label: "Last 24h", shortLabel: "24h", unit: "day", bucket: "1m" },
@@ -43,9 +44,14 @@ const METRIC_ICONS = {
   pm10_ugm3: <CloudHaze2 />,
 };
 
-const LINE_COLOR = "#2a78d6";
-const GRID_COLOR = "#e1e0d9";
-const CROSSHAIR_COLOR = "#c3c2b7";
+// Matches the dataviz palette's categorical-slot-1 hue (light/dark steps)
+// used elsewhere in the app, plus the light/dark gridline and axis-baseline
+// chrome roles -- kept as plain JS objects (not CSS vars) since these are
+// SVG props passed directly to Recharts, not DOM-styled elements.
+const CHART_COLORS = {
+  light: { line: "#2a78d6", grid: "#e1e0d9", crosshair: "#c3c2b7" },
+  dark: { line: "#3987e5", grid: "#2c2c2a", crosshair: "#383835" },
+};
 
 // Sensor data is only retained for 30 days -- navigating further back than
 // that would always show "no data available," so cap the stepper instead of
@@ -53,6 +59,8 @@ const CROSSHAIR_COLOR = "#c3c2b7";
 const RETENTION_DAYS = 30;
 
 export default function Graphs() {
+  const { theme } = useTheme();
+  const { line: LINE_COLOR, grid: GRID_COLOR, crosshair: CROSSHAIR_COLOR } = CHART_COLORS[theme];
   const [searchParams, setSearchParams] = useSearchParams();
   const metricKey = METRICS.some((m) => m.key === searchParams.get("metric"))
     ? searchParams.get("metric")
@@ -174,16 +182,14 @@ export default function Graphs() {
 
   return (
     <>
-      <h1 className="mb-3">Graphs</h1>
-
-      <Row className="mb-3 g-2">
-        <Col md={6}>
+      <Row className="mb-3 g-3">
+        <Col md={4}>
           <Dropdown onSelect={(key) => key && setMetricKey(key)}>
-            <Dropdown.Toggle variant="outline-secondary" className="w-100 text-start d-flex align-items-center">
+            <Dropdown.Toggle variant="outline-secondary" className="text-start d-flex align-items-center">
               <span className="me-2">{METRIC_ICONS[metricKey]}</span>
               {metric.label}
             </Dropdown.Toggle>
-            <Dropdown.Menu className="w-100">
+            <Dropdown.Menu>
               {METRICS.map((m) => (
                 <Dropdown.Item key={m.key} eventKey={m.key} active={m.key === metricKey}>
                   <span className="me-2">{METRIC_ICONS[m.key]}</span>
@@ -193,15 +199,15 @@ export default function Graphs() {
             </Dropdown.Menu>
           </Dropdown>
         </Col>
-        <Col md={6}>
-          <ButtonGroup className="w-100">
+        <Col md={8}>
+          <div className="d-flex gap-2">
             {RANGES.map((r) => (
               <ToggleButton
                 key={r.key}
                 id={`range-${r.key}`}
                 type="radio"
                 variant="outline-secondary"
-                className={range === r.key ? "btn-accent" : undefined}
+                className={`flex-fill ${range === r.key ? "btn-accent" : ""}`}
                 name="range"
                 value={r.key}
                 checked={range === r.key}
@@ -211,12 +217,12 @@ export default function Graphs() {
                 <span className="d-sm-none">{r.shortLabel}</span>
               </ToggleButton>
             ))}
-          </ButtonGroup>
+          </div>
         </Col>
       </Row>
 
       {rangeConfig.unit && (
-        <Row className="mb-3 g-2 align-items-center">
+        <Row className="mb-3 g-3 align-items-center">
           <Col xs="auto">
             <Button
               variant="outline-secondary"

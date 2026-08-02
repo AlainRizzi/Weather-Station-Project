@@ -1,18 +1,73 @@
 :root {
+  color-scheme: light;
+  --page-plane: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink-primary: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --border-hairline: rgba(11, 11, 11, 0.10);
+  --grid-color: #e1e0d9;
+  --crosshair-color: #c3c2b7;
+
   --accent: #2a78d6;
   --accent-hover: #1c5cab;
+  --accent-ink: #ffffff;
+
+  --assistant-bubble-bg: #eceae3;
+  --assistant-bubble-ink: var(--ink-primary);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page-plane: #0d0d0d;
+  --surface: #1a1a19;
+  --ink-primary: #ffffff;
+  --ink-secondary: #c3c2b7;
+  --ink-muted: #898781;
+  --border-hairline: rgba(255, 255, 255, 0.10);
+  --grid-color: #2c2c2a;
+  --crosshair-color: #383835;
+
+  --accent: #3987e5;
+  --accent-hover: #256abf;
+  --accent-ink: #ffffff;
+
+  --assistant-bubble-bg: #2c2c2a;
+  --assistant-bubble-ink: var(--ink-primary);
+}
+
+body {
+  background-color: var(--page-plane);
+  color: var(--ink-primary);
+}
+
+.card {
+  background-color: var(--surface);
+  color: var(--ink-primary);
+  border-color: var(--border-hairline);
+}
+
+.btn {
+  border-radius: 0.5rem;
+}
+.btn:active,
+.btn.active {
+  background-color: var(--accent-hover) !important;
+  border-color: var(--accent-hover) !important;
+  color: var(--accent-ink) !important;
 }
 
 .btn-accent,
 .btn-accent:hover,
-.btn-accent:focus {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.btn-accent:focus,
+.btn-check:checked + .btn-accent {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent-ink) !important;
 }
 .btn-accent:hover {
-  background-color: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background-color: var(--accent-hover) !important;
+  border-color: var(--accent-hover) !important;
 }
 
 .text-accent {
@@ -21,6 +76,14 @@
 .bg-accent {
   background-color: var(--accent) !important;
 }
+.text-muted {
+  color: var(--ink-muted) !important;
+}
+
+.bg-assistant-bubble {
+  background-color: var(--assistant-bubble-bg);
+  color: var(--assistant-bubble-ink);
+}
 
 .day-strip-scroll {
   scroll-snap-type: x proximity;
@@ -28,6 +91,7 @@
 .day-card {
   scroll-snap-align: start;
   width: 220px;
+  background-color: var(--surface);
 }
 @media (min-width: 576px) {
   .day-card {

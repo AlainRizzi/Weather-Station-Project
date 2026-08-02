@@ -15,6 +15,7 @@ import { Link } from "react-router";
 
 import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
+import { useTheme } from "../theme/ThemeContext.jsx";
 
 const METRIC_ICONS = {
   temperature_c: <Thermometer />,
@@ -29,7 +30,8 @@ const METRIC_ICONS = {
 
 // Fixed order, matches METRICS array order -- never cycled or reassigned
 // per-render. Validated with scripts/validate_palette.js (adjacent-pairs
-// mode): all pass. Dark-mode values are the palette's matching dark steps.
+// mode): all pass. METRIC_COLORS_DARK mirrors the same order/validation
+// against the palette's dark column.
 const METRIC_COLORS_LIGHT = {
   temperature_c: "#2a78d6",
   humidity_pct: "#eb6834",
@@ -40,6 +42,16 @@ const METRIC_COLORS_LIGHT = {
   pm2_5_ugm3: "#4a3aa7",
   pm10_ugm3: "#e34948",
 };
+const METRIC_COLORS_DARK = {
+  temperature_c: "#3987e5",
+  humidity_pct: "#d95926",
+  pressure_hpa: "#199e70",
+  wind_speed_ms: "#c98500",
+  wind_dir_deg: "#d55181",
+  noise_db: "#008300",
+  pm2_5_ugm3: "#9085e9",
+  pm10_ugm3: "#e66767",
+};
 
 function average(values) {
   const nonNull = values.filter((v) => v !== null && v !== undefined);
@@ -48,6 +60,8 @@ function average(values) {
 }
 
 export default function DayCard({ date }) {
+  const { theme } = useTheme();
+  const METRIC_COLORS = theme === "dark" ? METRIC_COLORS_DARK : METRIC_COLORS_LIGHT;
   const dateKey = date.format("YYYY-MM-DD");
   const [result, setResult] = useState(null); // { forDate, readings, error }
   const loaded = result?.forDate === dateKey;
@@ -126,7 +140,7 @@ export default function DayCard({ date }) {
                       <Line
                         type="monotone"
                         dataKey={m.key}
-                        stroke={METRIC_COLORS_LIGHT[m.key]}
+                        stroke={METRIC_COLORS[m.key]}
                         strokeWidth={2}
                         dot={false}
                         isAnimationActive={false}
