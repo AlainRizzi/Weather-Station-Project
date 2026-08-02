@@ -47,6 +47,11 @@ const LINE_COLOR = "#2a78d6";
 const GRID_COLOR = "#e1e0d9";
 const CROSSHAIR_COLOR = "#c3c2b7";
 
+// Sensor data is only retained for 30 days -- navigating further back than
+// that would always show "no data available," so cap the stepper instead of
+// letting the user land there.
+const RETENTION_DAYS = 30;
+
 export default function Graphs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const metricKey = METRICS.some((m) => m.key === searchParams.get("metric"))
@@ -55,11 +60,17 @@ export default function Graphs() {
   const initialRange = RANGES.some((r) => r.key === searchParams.get("range"))
     ? searchParams.get("range")
     : RANGES[0].key;
+  const initialRangeConfig = RANGES.find((r) => r.key === initialRange);
   const initialBack = Number.parseInt(searchParams.get("back"), 10);
+  const initialBackMax = initialRangeConfig.unit
+    ? Math.floor(RETENTION_DAYS / (initialRangeConfig.unit === "week" ? 7 : 1))
+    : 0;
   const [range, setRange] = useState(initialRange);
   // How many periods back from "now" the 24h/7d steppers are showing.
   // 0 = today / this week, 1 = yesterday / last week, etc.
-  const [periodsBack, setPeriodsBack] = useState(Number.isInteger(initialBack) && initialBack >= 0 ? initialBack : 0);
+  const [periodsBack, setPeriodsBack] = useState(
+    Number.isInteger(initialBack) && initialBack >= 0 ? Math.min(initialBack, initialBackMax) : 0
+  );
   const [readings, setReadings] = useState(null);
   const [error, setError] = useState(null);
 
@@ -113,6 +124,18 @@ export default function Graphs() {
     const now = dayjs();
     return { start: now.subtract(rangeConfig.hours, "hour"), end: now };
   }, [rangeConfig, periodsBack]);
+
+  // Data is only retained for RETENTION_DAYS -- disable "Previous" once one
+  // more step back would start earlier than the retention floor, so the user
+  // can never land on a period with no data purely because it's aged out.
+  const retentionFloor = useMemo(() => dayjs().subtract(RETENTION_DAYS, "day").startOf("day"), []);
+  const canGoBack = useMemo(() => {
+    if (!rangeConfig.unit) return false;
+    const nextStart = dayjs()
+      .subtract(periodsBack + 1, rangeConfig.unit)
+      .startOf(rangeConfig.unit);
+    return nextStart.isAfter(retentionFloor) || nextStart.isSame(retentionFloor);
+  }, [rangeConfig, periodsBack, retentionFloor]);
 
   useEffect(() => {
     let active = true;
@@ -199,6 +222,7 @@ export default function Graphs() {
               variant="outline-secondary"
               size="sm"
               onClick={() => setPeriodsBack((p) => p + 1)}
+              disabled={!canGoBack}
               aria-label={rangeConfig.unit === "day" ? "Previous day" : "Previous week"}
             >
               <ChevronLeft />
