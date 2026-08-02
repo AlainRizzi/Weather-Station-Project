@@ -9,10 +9,10 @@ import DayStrip from "../components/DayStrip.jsx";
 
 function StatCard({ icon, label, value, unit, metricKey }) {
   return (
-    <Col xs={12} sm={6} md={4}>
+    <Col xs={12} sm={6} md={4} lg={3}>
       <Card as={Link} to={`/graphs?metric=${metricKey}`} className="mb-3 shadow-sm text-decoration-none text-body">
         <Card.Body className="d-flex align-items-center">
-          <div className="fs-2 me-3 text-primary">{icon}</div>
+          <div className="fs-2 me-3 text-accent">{icon}</div>
           <div>
             <div className="text-muted small">{label}</div>
             <div className="fs-4 fw-semibold">

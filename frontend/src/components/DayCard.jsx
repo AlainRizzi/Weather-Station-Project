@@ -48,28 +48,23 @@ function average(values) {
 }
 
 export default function DayCard({ date }) {
-  const [readings, setReadings] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null); // { forDate, readings, error }
+  const loaded = result?.forDate === date.format("YYYY-MM-DD");
+  const readings = loaded ? result.readings : null;
+  const error = loaded ? result.error : null;
 
   useEffect(() => {
     let active = true;
-    setLoaded(false);
+    const forDate = date.format("YYYY-MM-DD");
 
     getReadingsInRange(date.startOf("day").toISOString(), date.endOf("day").toISOString(), {
       bucket: "1h",
     })
       .then((data) => {
-        if (active) {
-          setReadings(data);
-          setError(null);
-        }
+        if (active) setResult({ forDate, readings: data, error: null });
       })
       .catch((e) => {
-        if (active) setError(e.message);
-      })
-      .finally(() => {
-        if (active) setLoaded(true);
+        if (active) setResult({ forDate, readings: null, error: e.message });
       });
 
     return () => {
@@ -93,8 +88,7 @@ export default function DayCard({ date }) {
     <Card
       as={Link}
       to={graphsHref}
-      className="shadow-sm flex-shrink-0 text-decoration-none text-body"
-      style={{ width: 260 }}
+      className="shadow-sm flex-shrink-0 text-decoration-none text-body day-card"
     >
       <Card.Body>
         <Card.Title className="fs-6 mb-3">{date.format("ddd, MMM D")}</Card.Title>

@@ -27,9 +27,9 @@ import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
 
 const RANGES = [
-  { key: "24h", label: "Last 24h", unit: "day", bucket: "1m" },
-  { key: "7d", label: "Last 7 days", unit: "week", bucket: "1h" },
-  { key: "30d", label: "Last 30 days", hours: 24 * 30, bucket: "1d" },
+  { key: "24h", label: "Last 24h", shortLabel: "24h", unit: "day", bucket: "1m" },
+  { key: "7d", label: "Last 7 days", shortLabel: "7d", unit: "week", bucket: "1h" },
+  { key: "30d", label: "Last 30 days", shortLabel: "30d", hours: 24 * 30, bucket: "1d" },
 ];
 
 const METRIC_ICONS = {
@@ -65,6 +65,37 @@ export default function Graphs() {
 
   const metric = METRICS.find((m) => m.key === metricKey);
   const rangeConfig = RANGES.find((r) => r.key === range);
+
+  // If the URL had an invalid/malformed metric, range, or back value, rewrite
+  // it to the resolved defaults instead of leaving the bad value visible in
+  // the address bar. Runs once on mount; later changes go through
+  // setMetricKey/selectRange/setPeriodsBack, which already keep the URL and
+  // state in sync.
+  useEffect(() => {
+    const rawMetric = searchParams.get("metric");
+    const rawRange = searchParams.get("range");
+    const rawBack = searchParams.get("back");
+    const backWasValid = Number.isInteger(Number.parseInt(rawBack, 10)) && Number.parseInt(rawBack, 10) >= 0;
+
+    const metricInvalid = rawMetric !== null && rawMetric !== metricKey;
+    const rangeInvalid = rawRange !== null && rawRange !== range;
+    const backInvalid = rawBack !== null && (!backWasValid || Number.parseInt(rawBack, 10) !== periodsBack);
+
+    if (metricInvalid || rangeInvalid || backInvalid) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (metricInvalid) next.set("metric", metricKey);
+          if (rangeInvalid) next.set("range", range);
+          if (backInvalid) next.set("back", String(periodsBack));
+          return next;
+        },
+        { replace: true }
+      );
+    }
+    // Only ever check against the URL params present at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function selectRange(key) {
     setRange(key);
@@ -146,13 +177,15 @@ export default function Graphs() {
                 key={r.key}
                 id={`range-${r.key}`}
                 type="radio"
-                variant="outline-primary"
+                variant="outline-secondary"
+                className={range === r.key ? "btn-accent" : undefined}
                 name="range"
                 value={r.key}
                 checked={range === r.key}
                 onChange={(e) => selectRange(e.currentTarget.value)}
               >
-                {r.label}
+                <span className="d-none d-sm-inline">{r.label}</span>
+                <span className="d-sm-none">{r.shortLabel}</span>
               </ToggleButton>
             ))}
           </ButtonGroup>
@@ -224,13 +257,17 @@ export default function Graphs() {
                 <CartesianGrid strokeDasharray="0" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="time"
-                  tickFormatter={(t) => dayjs(t).format(range === "24h" ? "HH:mm" : "MMM D HH:mm")}
+                  tickFormatter={(t) =>
+                    dayjs(t).format(range === "24h" ? "HH:mm" : range === "30d" ? "MMM D" : "MMM D HH:mm")
+                  }
                   minTickGap={40}
                 />
                 <YAxis unit={metric.unit} domain={["auto", "auto"]} />
                 <Tooltip
                   cursor={{ stroke: CROSSHAIR_COLOR, strokeWidth: 1 }}
-                  labelFormatter={(t) => dayjs(t).format("MMM D, YYYY HH:mm:ss")}
+                  labelFormatter={(t) =>
+                    dayjs(t).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
+                  }
                   formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
                 />
                 <Line

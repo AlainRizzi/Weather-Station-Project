@@ -1,0 +1,51 @@
+:root {
+  --accent: #2a78d6;
+  --accent-hover: #1c5cab;
+}
+
+.btn-accent,
+.btn-accent:hover,
+.btn-accent:focus {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-accent:hover {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.text-accent {
+  color: var(--accent) !important;
+}
+.bg-accent {
+  background-color: var(--accent) !important;
+}
+
+.day-strip-scroll {
+  scroll-snap-type: x proximity;
+}
+.day-card {
+  scroll-snap-align: start;
+  width: 220px;
+}
+@media (min-width: 576px) {
+  .day-card {
+    width: 260px;
+  }
+}
+
+.chat-card {
+  min-height: 60vh;
+}
+.chat-card-body {
+  max-height: 60vh;
+}
+@media (max-width: 767.98px) {
+  .chat-card {
+    min-height: 50vh;
+  }
+  .chat-card-body {
+    max-height: 50vh;
+  }
+}

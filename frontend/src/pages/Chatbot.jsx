@@ -113,8 +113,8 @@ export default function Chatbot() {
   return (
     <>
       <h1 className="mb-3">Ask the Station</h1>
-      <Card className="mb-3 shadow-sm" style={{ minHeight: "60vh" }}>
-        <Card.Body className="d-flex flex-column gap-2" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+      <Card className="mb-3 shadow-sm chat-card">
+        <Card.Body className="d-flex flex-column gap-2 chat-card-body" style={{ overflowY: "auto" }}>
           {messages.map((m, i) => (
             <div
               key={i}
@@ -126,13 +126,13 @@ export default function Chatbot() {
                 </Alert>
               ) : m.role === "user" ? (
                 <div
-                  className="p-2 rounded-3 bg-primary text-white"
+                  className="p-2 rounded-3 bg-accent text-white"
                   style={{ maxWidth: "75%", whiteSpace: "pre-wrap" }}
                 >
                   {m.text}
                 </div>
               ) : (
-                <div className="p-2 rounded-3 bg-light" style={{ maxWidth: "100%" }}>
+                <div className="p-2 rounded-3 bg-assistant-bubble" style={{ maxWidth: "100%" }}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                     {m.text}
                   </ReactMarkdown>
@@ -161,7 +161,7 @@ export default function Chatbot() {
           disabled={loading}
           autoFocus
         />
-        <Button type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading} className="btn-accent" aria-label="Send message">
           <Send />
         </Button>
       </Form>

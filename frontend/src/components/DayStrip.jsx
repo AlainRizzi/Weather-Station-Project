@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import dayjs from "dayjs";
 
@@ -15,6 +15,9 @@ export default function DayStrip() {
   const [daysBack, setDaysBack] = useState(INITIAL_DAYS - 1);
   const [showTodayButton, setShowTodayButton] = useState(false);
   const scrollRef = useRef(null);
+  // scrollWidth right before daysBack changes, so the layout effect can
+  // compare against it once the new cards have actually been committed.
+  const prevScrollWidthRef = useRef(null);
 
   // Oldest-to-newest, today last -- rendered left-to-right so today sits at
   // the right edge.
@@ -26,11 +29,21 @@ export default function DayStrip() {
     el.scrollTo({ left: el.scrollWidth, behavior });
   }
 
-  // Snap to today (rightmost) on first mount and whenever more days are loaded,
-  // so newly-added cards on the left don't shift the visible scroll position.
+  // Snap to today (rightmost) on first mount.
   useEffect(() => {
     scrollToToday("auto");
   }, []);
+
+  // Runs after the DOM has actually been updated with the new (older) cards
+  // -- unlike requestAnimationFrame, this is guaranteed to see the committed
+  // layout, so the scroll correction can't race React's render.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || prevScrollWidthRef.current === null) return;
+    const delta = el.scrollWidth - prevScrollWidthRef.current;
+    if (delta !== 0) el.scrollLeft += delta;
+    prevScrollWidthRef.current = null;
+  }, [daysBack]);
 
   function handleScroll() {
     const el = scrollRef.current;
@@ -40,13 +53,8 @@ export default function DayStrip() {
   }
 
   function loadMore() {
-    const el = scrollRef.current;
-    const prevScrollWidth = el?.scrollWidth ?? 0;
+    prevScrollWidthRef.current = scrollRef.current?.scrollWidth ?? 0;
     setDaysBack((d) => d + LOAD_MORE_DAYS);
-    // Preserve visual scroll position after new (older) cards are prepended.
-    requestAnimationFrame(() => {
-      if (el) el.scrollLeft += el.scrollWidth - prevScrollWidth;
-    });
   }
 
   return (
@@ -62,7 +70,7 @@ export default function DayStrip() {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="d-flex gap-3 pb-2"
+        className="d-flex gap-3 pb-2 day-strip-scroll"
         style={{ overflowX: "auto" }}
       >
         <div className="d-flex align-items-center flex-shrink-0">
