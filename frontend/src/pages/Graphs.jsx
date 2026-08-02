@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, ButtonGroup, ToggleButton, Card, Form, Row, Col, Spinner } from "react-bootstrap";
+import { Alert, Button, ButtonGroup, ToggleButton, Card, Form, Row, Col, Spinner } from "react-bootstrap";
+import { ChevronLeft, ChevronRight } from "react-bootstrap-icons";
 import {
   ResponsiveContainer,
   LineChart,
@@ -16,8 +17,8 @@ import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
 
 const RANGES = [
-  { key: "24h", label: "Last 24h", hours: 24 },
-  { key: "7d", label: "Last 7 days", hours: 24 * 7 },
+  { key: "24h", label: "Last 24h", unit: "day" },
+  { key: "7d", label: "Last 7 days", unit: "week" },
   { key: "30d", label: "Last 30 days", hours: 24 * 30 },
 ];
 
@@ -27,16 +28,34 @@ export default function Graphs() {
     ? searchParams.get("metric")
     : METRICS[0].key;
   const [range, setRange] = useState(RANGES[0].key);
+  // How many periods back from "now" the 24h/7d steppers are showing.
+  // 0 = today / this week, 1 = yesterday / last week, etc.
+  const [periodsBack, setPeriodsBack] = useState(0);
   const [readings, setReadings] = useState(null);
   const [error, setError] = useState(null);
 
   const metric = METRICS.find((m) => m.key === metricKey);
+  const rangeConfig = RANGES.find((r) => r.key === range);
+
+  function selectRange(key) {
+    setRange(key);
+    setPeriodsBack(0);
+  }
+
+  const { start, end } = useMemo(() => {
+    if (rangeConfig.unit) {
+      const anchor = dayjs().subtract(periodsBack, rangeConfig.unit);
+      return {
+        start: anchor.startOf(rangeConfig.unit),
+        end: anchor.endOf(rangeConfig.unit),
+      };
+    }
+    const now = dayjs();
+    return { start: now.subtract(rangeConfig.hours, "hour"), end: now };
+  }, [rangeConfig, periodsBack]);
 
   useEffect(() => {
     let active = true;
-    const hours = RANGES.find((r) => r.key === range).hours;
-    const end = dayjs();
-    const start = end.subtract(hours, "hour");
 
     getReadingsInRange(start.toISOString(), end.toISOString())
       .then((data) => {
@@ -52,7 +71,7 @@ export default function Graphs() {
     return () => {
       active = false;
     };
-  }, [range]);
+  }, [start, end]);
 
   const data = useMemo(() => {
     if (!readings) return [];
@@ -95,7 +114,7 @@ export default function Graphs() {
                 name="range"
                 value={r.key}
                 checked={range === r.key}
-                onChange={(e) => setRange(e.currentTarget.value)}
+                onChange={(e) => selectRange(e.currentTarget.value)}
               >
                 {r.label}
               </ToggleButton>
@@ -103,6 +122,45 @@ export default function Graphs() {
           </ButtonGroup>
         </Col>
       </Row>
+
+      {rangeConfig.unit && (
+        <Row className="mb-3 g-2 align-items-center">
+          <Col xs="auto">
+            <Button
+              variant="outline-secondary"
+              size="sm"
+              onClick={() => setPeriodsBack((p) => p + 1)}
+              aria-label={rangeConfig.unit === "day" ? "Previous day" : "Previous week"}
+            >
+              <ChevronLeft />
+            </Button>
+          </Col>
+          <Col xs="auto" className="fw-semibold">
+            {rangeConfig.unit === "day"
+              ? periodsBack === 0
+                ? `Today (${start.format("MMM D, YYYY")})`
+                : periodsBack === 1
+                  ? `Yesterday (${start.format("MMM D, YYYY")})`
+                  : start.format("dddd, MMM D, YYYY")
+              : periodsBack === 0
+                ? `This week (${start.format("MMM D")} – ${end.format("MMM D, YYYY")})`
+                : periodsBack === 1
+                  ? `Last week (${start.format("MMM D")} – ${end.format("MMM D, YYYY")})`
+                  : `${start.format("MMM D")} – ${end.format("MMM D, YYYY")}`}
+          </Col>
+          <Col xs="auto">
+            <Button
+              variant="outline-secondary"
+              size="sm"
+              onClick={() => setPeriodsBack((p) => Math.max(0, p - 1))}
+              disabled={periodsBack === 0}
+              aria-label={rangeConfig.unit === "day" ? "Next day" : "Next week"}
+            >
+              <ChevronRight />
+            </Button>
+          </Col>
+        </Row>
+      )}
 
       <Card className="shadow-sm">
         <Card.Body>
@@ -123,7 +181,7 @@ export default function Graphs() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="time"
-                  tickFormatter={(t) => dayjs(t).format("MMM D HH:mm")}
+                  tickFormatter={(t) => dayjs(t).format(range === "24h" ? "HH:mm" : "MMM D HH:mm")}
                   minTickGap={40}
                 />
                 <YAxis unit={metric.unit} domain={["auto", "auto"]} />
