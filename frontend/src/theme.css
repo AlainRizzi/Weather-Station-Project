@@ -46,6 +46,13 @@ body {
   color: var(--ink-primary);
   border-color: var(--border-hairline);
 }
+/* Bootstrap's .text-body utility sets color via --bs-body-color with
+   !important, which stays a fixed light-mode gray and overrides .card's
+   color above -- StatCard/DayCard rely on .text-body for their linked
+   Card wrapper, so it must follow the theme too, not just plain .card. */
+.text-body {
+  color: var(--ink-primary) !important;
+}
 
 .btn {
   border-radius: 0.5rem;
