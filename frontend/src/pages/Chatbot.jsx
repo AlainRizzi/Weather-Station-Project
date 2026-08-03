@@ -69,6 +69,21 @@ export default function Chatbot() {
     };
   }, []);
 
+  // A reply from a question asked before this mount (e.g. the previous
+  // Chatbot instance, still running in the background after a navigate-away
+  // and back) keeps writing straight to sessionStorage, but this instance's
+  // own state was only seeded from storage once, at mount -- it has no way
+  // to notice a later write from that other instance's closures. Storage
+  // events don't fire for writes from the same tab/document, so poll while
+  // a reply could plausibly still be in flight.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const stored = loadMessages();
+      setMessages((current) => (JSON.stringify(current) === JSON.stringify(stored) ? current : stored));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   function persistMessages(updater) {
     const current = JSON.parse(sessionStorage.getItem(STORAGE_KEY) || "null") ?? [GREETING];
     const next = updater(current);

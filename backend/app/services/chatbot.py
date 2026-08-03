@@ -496,7 +496,12 @@ def units_for_columns(columns: list[str]) -> dict[str, str]:
     return units
 
 
+def round_numeric(value):
+    return round(value, 2) if isinstance(value, float) else value
+
+
 def summarize_results(message: str, columns: list[str], rows: list):
+    rows = [[round_numeric(v) for v in row] for row in rows]
     units = units_for_columns(columns)
     units_line = (
         "Units for these columns (state them exactly, never invent or guess a "
@@ -508,7 +513,8 @@ def summarize_results(message: str, columns: list[str], rows: list):
     if len(rows) == 1:
         style_instruction = (
             "Summarize the single result row in one short, friendly sentence for a "
-            f"non-technical user. Include the relevant numbers and units. {units_line}"
+            "non-technical user. Include the relevant numbers and units, using the "
+            f"numbers exactly as given (already rounded). {units_line}"
         )
     else:
         style_instruction = (
@@ -516,8 +522,9 @@ def summarize_results(message: str, columns: list[str], rows: list):
             "markdown table (GitHub-flavored markdown pipe table) with one column per "
             "field and one row per result row. Use short column headers with units in "
             f"parentheses taken from the mapping below, e.g. 'Temp (°C)'. {units_line} "
-            "Round numbers to 1-2 decimal places. Output ONLY the markdown table, no "
-            "surrounding prose. Do not collapse multiple rows into a single summary sentence."
+            "Use the numbers exactly as given (already rounded). Output ONLY the markdown "
+            "table, no surrounding prose. Do not collapse multiple rows into a single "
+            "summary sentence."
         )
 
     messages = [
