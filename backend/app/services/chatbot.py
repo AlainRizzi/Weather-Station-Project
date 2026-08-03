@@ -129,8 +129,24 @@ STYLE_RULE = "Do not use emojis. Do not use em dashes or double hyphens (--); us
 DASH_PATTERN = re.compile(r"\s*(--|[–—])\s*")
 TABLE_ROW_PATTERN = re.compile(r"^\s*\|?[\s:|-]+\|?\s*$")
 
+# gpt-oss occasionally leaks a short fragment of its own reasoning ahead of
+# the real reply with no separator, e.g. "Reply short, invite question.Hi!
+# ..." -- a real sentence boundary always has a space (or newline) after the
+# period, so a period directly followed by a letter marks a leaked-prefix
+# boundary. Only strip a SHORT leading fragment (<=60 chars) up to the FIRST
+# such boundary: real replies can legitimately contain the same
+# period-then-letter pattern later on (abbreviations, a number glued to the
+# next sentence, etc.), and blindly cutting at the last match anywhere in
+# the string risked deleting genuine content, not just the leak.
+REASONING_LEAK_PATTERN = re.compile(r"^.{1,60}?[.!?](?=[A-Za-z])")
+
+
+def strip_reasoning_leak(text: str) -> str:
+    return REASONING_LEAK_PATTERN.sub("", text, count=1)
+
 
 def enforce_style(text: str) -> str:
+    text = strip_reasoning_leak(text)
     lines = text.split("\n")
     fixed_lines = [
         line if TABLE_ROW_PATTERN.match(line) else DASH_PATTERN.sub(", ", line)
@@ -287,11 +303,10 @@ def classify_intent(message: str, history: list[tuple[str, str]]) -> str:
     return "unclear"
 
 
-def stream_reply(messages: list[dict], max_tokens: int, reasoning_effort: str = "low"):
-    """Stream a chat completion, yielding {"type": "token", "text": ...} per chunk.
+FALLBACK_REPLY = "Sorry, I didn't catch that. Could you ask again?"
 
-    Returns (via StopIteration.value) the full, style-enforced reply text.
-    """
+
+def _stream_once(messages: list[dict], max_tokens: int, reasoning_effort: str):
     stream = client.chat.completions.create(
         model=MODEL,
         max_tokens=max_tokens,
@@ -306,6 +321,24 @@ def stream_reply(messages: list[dict], max_tokens: int, reasoning_effort: str = 
             chunks.append(delta)
             yield {"type": "token", "text": delta}
     return enforce_style("".join(chunks))
+
+
+def stream_reply(messages: list[dict], max_tokens: int, reasoning_effort: str = "low"):
+    """Stream a chat completion, yielding {"type": "token", "text": ...} per chunk.
+
+    Returns (via StopIteration.value) the full, style-enforced reply text.
+
+    The model occasionally returns an empty completion (its reasoning trace
+    consumes the whole token budget before any content, independent of the
+    reasoning_effort setting) -- retry once, silently, before falling back
+    to a fixed message, so the user is never shown nothing.
+    """
+    reply = yield from _stream_once(messages, max_tokens, reasoning_effort)
+    if reply:
+        return reply
+
+    reply = yield from _stream_once(messages, max_tokens, reasoning_effort)
+    return reply or FALLBACK_REPLY
 
 
 def reply_to_small_talk(message: str, history: list[tuple[str, str]]):
@@ -325,13 +358,20 @@ def reply_to_small_talk(message: str, history: list[tuple[str, str]]):
                 "If it's an opener, reply in one short sentence and invite them to ask about "
                 "temperature, humidity, pressure, or other readings. If it's a closing "
                 "acknowledgment, reply with a brief one-sentence acknowledgment and nothing "
-                f"more, do not restate or re-summarize the previous answer. {STYLE_RULE}"
+                "more, do not restate or re-summarize the previous answer. Output ONLY the "
+                "final reply itself, never any restatement of these instructions or your own "
+                f"reasoning about them. {STYLE_RULE}"
             ),
         },
         *history_to_messages(history),
         {"role": "user", "content": message},
     ]
-    return (yield from stream_reply(messages, max_tokens=300))
+    # max_tokens=300 wasn't enough headroom for the model's internal
+    # reasoning trace before it emits the actual reply -- same class of bug
+    # as classify_intent's, where a too-low budget truncated mid-thought and
+    # produced empty or reasoning-leaked output on a meaningful fraction of
+    # calls even at low reasoning effort.
+    return (yield from stream_reply(messages, max_tokens=500))
 
 
 def reply_to_unclear(message: str):

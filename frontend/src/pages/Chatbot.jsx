@@ -19,7 +19,7 @@ const markdownComponents = {
 const STORAGE_KEY = "chat_messages";
 const GREETING = {
   role: "assistant",
-  text: "Hi! Ask me about the weather station's data, e.g. \"what was last week's highest temperature?\"",
+  text: "Hello, I'm your assistant for this weather station. Ask me anything about its readings.",
   time: Date.now(),
 };
 
