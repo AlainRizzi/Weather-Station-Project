@@ -315,12 +315,17 @@ def reply_to_small_talk(message: str, history: list[tuple[str, str]]):
             "content": (
                 "You are a friendly assistant for a weather station app. The user's latest "
                 "message is small talk (a greeting, thanks, or a short acknowledgment), not a "
-                "data question. Look at the conversation history to tell whether this opens the "
-                "conversation or just closes out a prior answer. If it opens the conversation, "
-                "reply in one short sentence and invite them to ask about temperature, humidity, "
-                "pressure, or other readings. If it just acknowledges/thanks you for a prior "
-                f"answer, reply with a brief one-sentence acknowledgment and nothing more, do "
-                f"not restate or re-summarize the previous answer. {STYLE_RULE}"
+                "data question. Decide which of the two it is from the message's OWN wording "
+                "first, not from guessing at conversational vibe: a greeting word (hi, hello, "
+                "hey, good morning/afternoon/evening) is ALWAYS an opener, even if it comes "
+                "after a prior answer in the history -- a returning user saying \"hi\" again is "
+                "still greeting you, never thanking you. Only treat the message as a closing "
+                "acknowledgment if it actually uses acknowledgment/thanks wording (thanks, "
+                "thank you, ok, cool, got it, perfect, sounds good, no problem, you're welcome). "
+                "If it's an opener, reply in one short sentence and invite them to ask about "
+                "temperature, humidity, pressure, or other readings. If it's a closing "
+                "acknowledgment, reply with a brief one-sentence acknowledgment and nothing "
+                f"more, do not restate or re-summarize the previous answer. {STYLE_RULE}"
             ),
         },
         *history_to_messages(history),
