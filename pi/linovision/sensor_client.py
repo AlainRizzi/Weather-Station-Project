@@ -7,7 +7,15 @@ backend ingestion API.
 import os
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# The station's own civil time, DST-aware -- readings are timestamped in
+# this zone, not UTC, so "today"/"July 30" means the same calendar day here
+# as it does to the person standing at the station. zoneinfo is Python
+# stdlib (3.9+), no extra dependency; dayjs's own "timezone" plugin (bundled
+# with dayjs, also no new npm package) is the frontend-side equivalent.
+STATION_TZ = ZoneInfo("Asia/Beirut")
 
 import requests
 from dotenv import load_dotenv
@@ -104,7 +112,7 @@ def read_sensors() -> dict:
 def send_reading(reading: dict) -> None:
     payload = {
         "station_name": STATION_NAME,
-        "time": datetime.now(timezone.utc).isoformat(),
+        "time": datetime.now(STATION_TZ).isoformat(),
         **reading,
     }
     response = requests.post(API_URL, json=payload, timeout=5)

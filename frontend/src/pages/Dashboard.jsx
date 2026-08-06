@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { Card, Col, Row, Spinner, Alert } from "react-bootstrap";
 import { Thermometer, Droplet, Speedometer2, Wind, Compass, VolumeUp, CloudHaze2 } from "react-bootstrap-icons";
 import { Link } from "react-router";
-import dayjs from "dayjs";
 
 import { getLatestReading } from "../api/client.js";
 import DayStrip from "../components/DayStrip.jsx";
+import dayjs, { STATION_TZ } from "../stationTime.js";
 
 function StatCard({ icon, label, value, unit, metricKey }) {
   return (
@@ -44,7 +44,7 @@ export default function Dashboard() {
   return (
     <>
       <p className="text-muted">
-        Last updated {dayjs(reading.time).format("MMM D, YYYY HH:mm:ss")}
+        Last updated {dayjs(reading.time).tz(STATION_TZ).format("MMM D, YYYY HH:mm:ss")}
       </p>
       <Row>
         <StatCard icon={<Thermometer />} label="Temperature" value={reading.temperature_c} unit="°C" metricKey="temperature_c" />

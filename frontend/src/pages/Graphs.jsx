@@ -20,12 +20,12 @@ import {
   CartesianGrid,
   Tooltip,
 } from "recharts";
-import dayjs from "dayjs";
 import { useSearchParams } from "react-router";
 
 import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
 import { useTheme } from "../theme/ThemeContext.jsx";
+import dayjs, { STATION_TZ } from "../stationTime.js";
 
 const RANGES = [
   { key: "24h", label: "Last 24h", shortLabel: "24h", unit: "day", bucket: "1m" },
@@ -121,25 +121,33 @@ export default function Graphs() {
     setPeriodsBack(0);
   }
 
+  // "now"/"today" mean the station's own calendar day (Asia/Beirut), not
+  // the viewer's browser timezone -- this is the station's data, so
+  // "today"/"this week" should mean the same thing regardless of where
+  // it's being viewed from.
   const { start, end } = useMemo(() => {
     if (rangeConfig.unit) {
-      const anchor = dayjs().subtract(periodsBack, rangeConfig.unit);
+      const anchor = dayjs().tz(STATION_TZ).subtract(periodsBack, rangeConfig.unit);
       return {
         start: anchor.startOf(rangeConfig.unit),
         end: anchor.endOf(rangeConfig.unit),
       };
     }
-    const now = dayjs();
+    const now = dayjs().tz(STATION_TZ);
     return { start: now.subtract(rangeConfig.hours, "hour"), end: now };
   }, [rangeConfig, periodsBack]);
 
   // Data is only retained for RETENTION_DAYS -- disable "Previous" once one
   // more step back would start earlier than the retention floor, so the user
   // can never land on a period with no data purely because it's aged out.
-  const retentionFloor = useMemo(() => dayjs().subtract(RETENTION_DAYS, "day").startOf("day"), []);
+  const retentionFloor = useMemo(
+    () => dayjs().tz(STATION_TZ).subtract(RETENTION_DAYS, "day").startOf("day"),
+    []
+  );
   const canGoBack = useMemo(() => {
     if (!rangeConfig.unit) return false;
     const nextStart = dayjs()
+      .tz(STATION_TZ)
       .subtract(periodsBack + 1, rangeConfig.unit)
       .startOf(rangeConfig.unit);
     return nextStart.isAfter(retentionFloor) || nextStart.isSame(retentionFloor);
@@ -148,18 +156,11 @@ export default function Graphs() {
   useEffect(() => {
     let active = true;
 
-    // start/end are local-midnight-anchored dayjs objects (used for display
-    // and stepper comparisons below), but the API's day window must be the
-    // UTC calendar day, since that's what the stored reading times use --
-    // start.toISOString()/end.toISOString() would convert local midnight to
-    // UTC and shift the window by the browser's offset (e.g. 9pm-to-9pm).
-    // Build the request bounds from the calendar fields directly instead.
-    const rangeStart = rangeConfig.unit
-      ? `${start.format("YYYY-MM-DD")}T00:00:00.000Z`
-      : start.toISOString();
-    const rangeEnd = rangeConfig.unit
-      ? `${end.format("YYYY-MM-DD")}T23:59:59.999Z`
-      : end.toISOString();
+    // start/end are already Beirut-anchored (see above), so toISOString()
+    // correctly converts Beirut midnight/hour boundaries to the true UTC
+    // instant the API compares against.
+    const rangeStart = start.toISOString();
+    const rangeEnd = end.toISOString();
 
     getReadingsInRange(rangeStart, rangeEnd, { bucket: rangeConfig.bucket })
       .then((data) => {
@@ -302,7 +303,7 @@ export default function Graphs() {
                   <XAxis
                     dataKey="time"
                     tickFormatter={(t) =>
-                      dayjs(t).format(range === "24h" ? "HH:mm" : range === "30d" ? "MMM D" : "MMM D HH:mm")
+                      dayjs(t).tz(STATION_TZ).format(range === "24h" ? "HH:mm" : range === "30d" ? "MMM D" : "MMM D HH:mm")
                     }
                     minTickGap={40}
                   />
@@ -310,7 +311,7 @@ export default function Graphs() {
                   <Tooltip
                     cursor={{ stroke: CROSSHAIR_COLOR, strokeWidth: 1 }}
                     labelFormatter={(t) =>
-                      dayjs(t).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
+                      dayjs(t).tz(STATION_TZ).format(range === "30d" ? "MMM D, YYYY" : "MMM D, YYYY HH:mm:ss")
                     }
                     formatter={(value) => [`${Number(value).toFixed(1)} ${metric.unit}`, metric.label]}
                     contentStyle={{

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
-import dayjs from "dayjs";
 
 import DayCard from "./DayCard.jsx";
+import dayjs, { STATION_TZ } from "../stationTime.js";
 
 const VISIBLE_DAYS = 7;
 // How close to the right edge (px) counts as "still at today" for showing/hiding
@@ -18,8 +18,12 @@ export default function DayStrip() {
   // `date` prop across re-renders (e.g. from scroll events) -- otherwise
   // every render hands DayCard a brand-new dayjs object, which its fetch
   // effect would see as "changed" and re-fetch for no reason.
+  // "Today" is the station's own calendar day (Asia/Beirut), not the
+  // viewer's browser timezone -- this is the station's data, so everyone
+  // looking at it should see the same "Past days" regardless of where
+  // they're viewing from.
   const dates = useMemo(() => {
-    const today = dayjs().startOf("day");
+    const today = dayjs().tz(STATION_TZ).startOf("day");
     return Array.from({ length: VISIBLE_DAYS }, (_, i) => today.subtract(VISIBLE_DAYS - 1 - i, "day"));
   }, []);
 

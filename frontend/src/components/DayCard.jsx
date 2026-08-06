@@ -10,12 +10,12 @@ import {
   CloudHaze2,
 } from "react-bootstrap-icons";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis } from "recharts";
-import dayjs from "dayjs";
 import { Link } from "react-router";
 
 import { getReadingsInRange } from "../api/client.js";
 import { METRICS } from "../metrics.js";
 import { useTheme } from "../theme/ThemeContext.jsx";
+import dayjs, { STATION_TZ } from "../stationTime.js";
 
 const METRIC_ICONS = {
   temperature_c: <Thermometer />,
@@ -71,13 +71,12 @@ export default function DayCard({ date }) {
   useEffect(() => {
     let active = true;
 
-    // Build the UTC day window from the date's calendar fields directly,
-    // not date.startOf("day").toISOString() -- startOf("day") anchors to
-    // local midnight, and converting that to ISO shifts the window off by
-    // the browser's UTC offset (e.g. 9pm-to-9pm instead of midnight-to-
-    // midnight) even though the stored reading times are already UTC.
-    const dayStart = `${dateKey}T00:00:00.000Z`;
-    const dayEnd = `${dateKey}T23:59:59.999Z`;
+    // `date` is already anchored to the station's timezone (Asia/Beirut,
+    // see DayStrip.jsx), so startOf("day")/endOf("day") give Beirut
+    // midnight-to-midnight; toISOString() converts that to the correct
+    // real UTC instant for the API call.
+    const dayStart = date.startOf("day").toISOString();
+    const dayEnd = date.endOf("day").toISOString();
 
     getReadingsInRange(dayStart, dayEnd, {
       bucket: "1h",
@@ -107,7 +106,7 @@ export default function DayCard({ date }) {
     return result;
   }, [readings]);
 
-  const daysBack = dayjs().startOf("day").diff(date.startOf("day"), "day");
+  const daysBack = dayjs().tz(STATION_TZ).startOf("day").diff(date.startOf("day"), "day");
   const graphsHref = `/graphs?range=24h&back=${daysBack}`;
 
   return (

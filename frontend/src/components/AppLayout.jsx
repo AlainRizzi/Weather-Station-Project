@@ -25,7 +25,7 @@ export default function AppLayout() {
               aria-label={themeToggleLabel}
               title={themeToggleLabel}
             >
-              {theme === "dark" ? <Sun /> : <MoonStars />}
+              {theme === "dark" ? <MoonStars /> : <Sun />}
             </Button>
             <Navbar.Toggle aria-controls="main-nav" />
           </div>
@@ -38,7 +38,7 @@ export default function AppLayout() {
                 aria-label={themeToggleLabel}
                 title={themeToggleLabel}
               >
-                {theme === "dark" ? <Sun /> : <MoonStars />}
+                {theme === "dark" ? <MoonStars /> : <Sun />}
               </Button>
               <Nav.Link as={Link} to="/" active={pathname === "/"} className="d-flex align-items-center">
                 <HouseDoorFill className="me-2" />

@@ -21,16 +21,16 @@
 #include <ModbusMaster.h>
 
 // ---- Config (mirrors pi/thd/.env.example) ----
-const char *WIFI_SSID = "your-wifi-ssid";
-const char *WIFI_PASSWORD = "your-wifi-password";
+const char *WIFI_SSID = "Alain";
+const char *WIFI_PASSWORD = "CharbelRizzi@1998!";
 
 // Pick whichever backend this device targets, then set API_URL below.
-const char *API_URL_CLOUDFLARE = "https://api.yourdomain.com/readings";
+const char *API_URL_RAILWAY = "https://weather-station-project-production.up.railway.app/readings";
 const char *API_URL_LOCAL = "http://192.168.1.100:8000/readings";  // Raspberry Pi LAN IP/port
 
-const char *API_URL = API_URL_CLOUDFLARE;
-const char *STATION_NAME = "";
-const unsigned long SAMPLE_INTERVAL_MS = 1000;
+const char *API_URL = API_URL_RAILWAY;
+const char *STATION_NAME = "akkar-weather-station";
+const unsigned long SAMPLE_INTERVAL_MS = 5000;
 
 // Factory default is 1 (upper address terminal OPEN, SW1=1) -- see the
 // manual's communication address setting table if this unit's rotary
@@ -40,7 +40,7 @@ const long MODBUS_BAUDRATE = 9600;
 
 #define RS485_RX_PIN 16
 #define RS485_TX_PIN 17
-#define RS485_DE_PIN -1  // set to a GPIO number if your transceiver needs manual direction control
+#define RS485_DE_PIN 4  // MAX485 module: DE/RE tied together, driven from this GPIO
 
 ModbusMaster modbus;
 
@@ -101,11 +101,15 @@ bool readSensors(JsonDocument &doc) {
 
 void sendReading(JsonDocument &doc) {
   doc["station_name"] = STATION_NAME;
-  // ESP32 has no RTC battery by default; sync time via NTP before relying on this.
+  // ESP32 has no RTC battery by default; sync time via NTP before relying on
+  // this. localtime() here resolves to the station's own civil time (Beirut,
+  // DST-aware per the TZ rule set in setup()), not UTC -- the %z at the end
+  // writes the real, current offset (+02:00 or +03:00) instead of a
+  // hardcoded "Z" that would misrepresent this as UTC.
   time_t now;
   time(&now);
-  char isoTime[25];
-  strftime(isoTime, sizeof(isoTime), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+  char isoTime[26];
+  strftime(isoTime, sizeof(isoTime), "%Y-%m-%dT%H:%M:%S%z", localtime(&now));
   doc["time"] = isoTime;
 
   String payload;
@@ -124,10 +128,34 @@ void sendReading(JsonDocument &doc) {
   http.end();
 }
 
+// 2020-01-01 00:00:00 UTC -- an arbitrary plausible-time floor. configTime()
+// only starts NTP sync asynchronously; time(&now) would otherwise return the
+// ESP32's default epoch (1970) until sync actually completes, so every
+// reading POSTed before that finishes would carry a bogus timestamp.
+const time_t NTP_SYNC_FLOOR = 1577836800;
+
+void waitForNtpSync() {
+  Serial.print("Waiting for NTP time sync");
+  time_t now;
+  time(&now);
+  while (now < NTP_SYNC_FLOOR) {
+    delay(500);
+    Serial.print(".");
+    time(&now);
+  }
+  Serial.println(" synced");
+}
+
 void setup() {
   Serial.begin(115200);
   connectWiFi();
-  configTime(0, 0, "pool.ntp.org");  // UTC, needed for a correct "time" field
+  // Asia/Beirut's POSIX TZ rule: EET = UTC+2 standard, EEST = UTC+3 during
+  // DST, which runs from the last Sunday of March to the last Sunday of
+  // October (M3.5.0/3 .. M10.5.0/4) -- matches Lebanon's actual DST
+  // schedule, so localtime() below always reflects the correct current
+  // offset instead of a fixed one that would be wrong half the year.
+  configTzTime("EET-2EEST,M3.5.0/3,M10.5.0/4", "pool.ntp.org");
+  waitForNtpSync();
 
   if (RS485_DE_PIN >= 0) {
     pinMode(RS485_DE_PIN, OUTPUT);

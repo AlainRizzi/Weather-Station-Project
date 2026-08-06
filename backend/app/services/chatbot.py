@@ -34,7 +34,14 @@ Streaming:
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# The station's own civil time, DST-aware -- matches pi/linovision and
+# pi/thd's sensor clients and the DB session's own timezone (see db.py),
+# so "today"/"July 30" means the same calendar day the SQL actually queries
+# against, not UTC's.
+STATION_TZ = ZoneInfo("Asia/Beirut")
 
 from openai import OpenAI
 from sqlalchemy import text
@@ -206,9 +213,12 @@ RAW_ROW_LIMIT = 5
 AGGREGATE_ROW_LIMIT = 100
 
 SQL_SYSTEM_PROMPT_TEMPLATE = f"""You are a SQL generator for a PostgreSQL weather database.
-The current date and time is {{now}}. Resolve any relative or year-less date the
-user gives (e.g. "July 30", "yesterday", "last week") against this current date,
-never against a guessed or remembered year.
+The current date and time is {{now}}, in the station's own local time (Asia/Beirut).
+Resolve any relative or year-less date the user gives (e.g. "July 30", "yesterday",
+"last week") against this current date, never against a guessed or remembered year.
+The database session's timezone is already set to Asia/Beirut, so a plain date literal
+like '2026-07-30' or a date_trunc('day', time) bucket is interpreted as that Beirut
+calendar day directly -- do not add manual UTC offsets or conversions.
 Schema:
 {SCHEMA_DESCRIPTION}
 Units (each column is always recorded in this unit, never any other):
@@ -502,7 +512,7 @@ def answer_data_question(message: str, db: Session, history: list[tuple[str, str
 
 
 def generate_sql(message: str, history: list[tuple[str, str]] = [], feedback: str | None = None) -> str:
-    now = datetime.now(timezone.utc).strftime("%A, %B %-d, %Y, %H:%M UTC")
+    now = datetime.now(STATION_TZ).strftime("%A, %B %-d, %Y, %H:%M (%Z)")
     messages = [
         {"role": "system", "content": SQL_SYSTEM_PROMPT_TEMPLATE.format(now=now)},
         *history_to_messages(history),
