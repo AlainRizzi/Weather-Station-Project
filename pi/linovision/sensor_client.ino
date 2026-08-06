@@ -29,7 +29,7 @@ const char *API_URL_LOCAL = "http://192.168.1.100:8000/readings";  // Raspberry 
 
 const char *API_URL = API_URL_RAILWAY;
 const char *STATION_NAME = "akkar-weather-station";
-const unsigned long SAMPLE_INTERVAL_MS = 5000;
+const unsigned long SAMPLE_INTERVAL_MS = 30000;
 
 // Manual's per-model default-address table lists S800 (8-in-1) as 46, not the
 // generic default of 1 -- confirm the real address on the device (USB config

@@ -30,7 +30,7 @@ const char *API_URL_LOCAL = "http://192.168.1.100:8000/readings";  // Raspberry 
 
 const char *API_URL = API_URL_RAILWAY;
 const char *STATION_NAME = "akkar-weather-station";
-const unsigned long SAMPLE_INTERVAL_MS = 5000;
+const unsigned long SAMPLE_INTERVAL_MS = 30000;
 
 // Factory default is 1 (upper address terminal OPEN, SW1=1) -- see the
 // manual's communication address setting table if this unit's rotary
