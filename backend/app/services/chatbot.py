@@ -94,11 +94,11 @@ COLUMN_UNITS = {
 COLUMN_UNITS_DESCRIPTION = "\n".join(f"  - {col}: {unit}" for col, unit in COLUMN_UNITS.items())
 
 STATION_FACTS = """
-This weather station is a Raspberry Pi based setup that measures temperature,
+This weather station is an ESP32 based setup that measures temperature,
 humidity, atmospheric pressure, wind speed/direction, noise level, and
-PM2.5/PM10 particulate matter concentration once per second, and streams the
-readings to a cloud database in real time. Users can ask this chatbot
-questions about the station's recorded data in natural language.
+PM2.5/PM10 particulate matter concentration once every 30 seconds, and
+streams the readings to a cloud database in real time. Users can ask this
+chatbot questions about the station's recorded data in natural language.
 
 What each measured metric is:
 - Temperature (°C): the air temperature at the station.
@@ -551,12 +551,21 @@ def units_for_columns(columns: list[str]) -> dict[str, str]:
     return units
 
 
-def round_numeric(value):
-    return round(value, 2) if isinstance(value, float) else value
+def format_value(value):
+    if isinstance(value, float):
+        return round(value, 2)
+    if isinstance(value, datetime):
+        # DB rows come back as timezone-aware datetimes already resolved to
+        # the station's zone (the DB session is set to Asia/Beirut, see
+        # db.py) -- format explicitly here rather than pass the raw object
+        # into the prompt, so the model states the time as given instead of
+        # re-deriving (and mislabeling) a timezone from it.
+        return value.astimezone(STATION_TZ).strftime("%B %-d, %Y, %H:%M %Z")
+    return value
 
 
 def summarize_results(message: str, columns: list[str], rows: list):
-    rows = [[round_numeric(v) for v in row] for row in rows]
+    rows = [[format_value(v) for v in row] for row in rows]
     units = units_for_columns(columns)
     units_line = (
         "Units for these columns (state them exactly, never invent or guess a "
@@ -565,11 +574,17 @@ def summarize_results(message: str, columns: list[str], rows: list):
         else "None of these columns has a known physical unit; do not invent one."
     )
 
+    time_note = (
+        "Any date/time value is already formatted exactly as it should be shown, including "
+        "its timezone abbreviation (the station's own local time) -- state it verbatim, do "
+        "not reformat it, drop the timezone, or relabel it as UTC or any other zone."
+    )
+
     if len(rows) == 1:
         style_instruction = (
             "Summarize the single result row in one short, friendly sentence for a "
             "non-technical user. Include the relevant numbers and units, using the "
-            f"numbers exactly as given (already rounded). {units_line}"
+            f"numbers exactly as given (already rounded). {units_line} {time_note}"
         )
     else:
         style_instruction = (
@@ -577,7 +592,9 @@ def summarize_results(message: str, columns: list[str], rows: list):
             "markdown table (GitHub-flavored markdown pipe table) with one column per "
             "field and one row per result row. Use short column headers with units in "
             f"parentheses taken from the mapping below, e.g. 'Temp (°C)'. {units_line} "
-            "Use the numbers exactly as given (already rounded). Output ONLY the markdown "
+            "Use the numbers exactly as given (already rounded). "
+            f"{time_note} "
+            "Output ONLY the markdown "
             "table, no surrounding prose. Do not collapse multiple rows into a single "
             "summary sentence."
         )
