@@ -35,6 +35,7 @@ class ChatLog(Base):
     __tablename__ = "chat_log"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
     user_message: Mapped[str] = mapped_column(Text)
     intent: Mapped[str | None] = mapped_column(String, nullable=True)
     generated_sql: Mapped[str | None] = mapped_column(Text, nullable=True)
