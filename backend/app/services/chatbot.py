@@ -253,6 +253,14 @@ Rules:
   "every reading for the past hour/day/week", "dump the whole table") or an
   aggregate over a window wider than about {AGGREGATE_ROW_LIMIT} buckets,
   do NOT generate a query. Instead output exactly: {TOO_BROAD_SENTINEL}
+
+Before writing the final query, check the latest message one more time: if it is
+just an aggregate word or a short variant of one (e.g. "lowest", "lowest?", "min",
+"the minimum", "highest", "average"), the SQL function you use MUST match that word
+exactly (lowest/min -> MIN(...), highest/max -> MAX(...), average -> AVG(...)) even
+though every other slot (station/metric/time range) is carried over unchanged from
+the previous question. Do not reuse the previous message's aggregate function just
+because the rest of the query looks similar.
 """
 
 FORBIDDEN_SQL = re.compile(

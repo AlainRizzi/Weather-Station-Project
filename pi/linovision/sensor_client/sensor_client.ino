@@ -20,8 +20,8 @@
 #include <ModbusMaster.h>
 
 // ---- Config (mirrors pi/linovision/.env.example) ----
-const char *WIFI_SSID = "your-wifi-ssid";
-const char *WIFI_PASSWORD = "your-wifi-password";
+const char *WIFI_SSID = "Alain";
+const char *WIFI_PASSWORD = "CharbelRizzi@1998!";
 
 // Pick whichever backend this device targets, then set API_URL below.
 const char *API_URL_RAILWAY = "https://weather-station-project-production.up.railway.app/readings";
@@ -39,7 +39,7 @@ const long MODBUS_BAUDRATE = 9600;
 
 #define RS485_RX_PIN 16
 #define RS485_TX_PIN 17
-#define RS485_DE_PIN -1  // set to a GPIO number if your transceiver needs manual direction control
+#define RS485_DE_PIN 21  // MAX485 module: DE/RE tied together, driven from this GPIO
 
 ModbusMaster modbus;
 
