@@ -21,6 +21,15 @@ def set_session_timezone(dbapi_connection, connection_record):
     # resolve against that same zone, or a bare '2026-07-30' would silently
     # mean UTC midnight instead of Beirut midnight and reintroduce the exact
     # day-boundary mismatch this was fixed for.
+    #
+    # The production database itself also has `ALTER DATABASE ... SET
+    # timezone = 'Asia/Beirut'` applied directly (its own default for every
+    # new connection, verified via pg_db_role_setting), after this
+    # connect-event alone was observed to behave inconsistently on Railway
+    # -- some pooled connections reported Asia/Beirut, others silently
+    # reported Etc/UTC despite identical code, cause not fully root-caused.
+    # This SET TIME ZONE call is kept as a second, redundant safeguard, not
+    # the sole mechanism.
     with dbapi_connection.cursor() as cursor:
         cursor.execute("SET TIME ZONE 'Asia/Beirut'")
 
