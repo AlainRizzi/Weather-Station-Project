@@ -1,11 +1,7 @@
-import logging
-
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
-
-logger = logging.getLogger(__name__)
 
 # Managed Postgres providers (e.g. Railway) hand out plain postgresql:// URLs,
 # which SQLAlchemy defaults to the psycopg2 driver; this project installs
@@ -27,10 +23,6 @@ def set_session_timezone(dbapi_connection, connection_record):
     # day-boundary mismatch this was fixed for.
     with dbapi_connection.cursor() as cursor:
         cursor.execute("SET TIME ZONE 'Asia/Beirut'")
-        cursor.execute("SHOW TIME ZONE")
-        result = cursor.fetchone()
-    # TEMPORARY -- diagnosing why this doesn't seem to persist in production.
-    logger.warning("db.py connect event fired; TIME ZONE now reports: %r", result)
 
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
