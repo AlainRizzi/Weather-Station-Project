@@ -41,7 +41,7 @@
 // WIFI
 // ============================================================
 
-const char *WIFI_SSID = "Alain"
+const char *WIFI_SSID = "Alain";
 
 // Put your Wi-Fi password locally here.
 // Do not publish/share the completed sketch with the password.
