@@ -33,8 +33,8 @@
 // Wi-Fi
 // ============================================================
 
-const char *WIFI_SSID = "Netis";
-const char *WIFI_PASSWORD = "36977963";
+const char *WIFI_SSID = "Alain";
+const char *WIFI_PASSWORD = "CharbelRizzi@1998!";
 
 // ============================================================
 // Backend

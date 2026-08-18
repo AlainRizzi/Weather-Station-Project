@@ -1,16 +1,17 @@
 # Weather Station Project
 
-A Raspberry Pi based weather station that streams sensor readings (temperature,
-humidity, pressure, wind, noise, PM2.5/PM10 particulate matter, ...) to a cloud database once per second,
-with a website to visualize the data and a chatbot that answers questions in
-plain English — both technical data questions ("what was last week's highest
-temperature?") and small talk / questions about the station itself.
+An ESP32 based weather station that streams sensor readings (temperature,
+humidity, pressure, wind, noise, PM2.5/PM10 particulate matter, ...) to a
+cloud database every 30 seconds, with a website to visualize the data and a
+chatbot that answers questions in plain English — both technical data
+questions ("what was last week's highest temperature?") and small talk /
+questions about the station itself.
 
 ## Architecture
 
 ```
-Raspberry Pi / ESP32 (sensors)
-  -> sensor_client.py / sensor_client.ino reads sensors every 30s
+ESP32 (sensors)
+  -> sensor_client.ino reads sensors every 30s
   -> POST /readings  (HTTPS)
        |
        v
@@ -30,7 +31,7 @@ PostgreSQL (Railway)
 Repo layout:
 
 ```
-pi/             Sensor-reading + upload scripts (Raspberry Pi Python / ESP32 Arduino)
+pi/             Sensor-reading + upload scripts (ESP32 Arduino / Raspberry Pi Python)
   linovision/   Linovision IOT-S300WS8 8-in-1 weather sensor
   thd/          Autonics THD-WD1-T temperature/humidity sensor
 backend/    FastAPI app (ingestion API, stats API, chatbot) + db/migrations (SQL schema)
@@ -124,14 +125,14 @@ uvicorn app.main:app --reload
 
 API docs available at `http://localhost:8000/docs`.
 
-### 3. Sensor clients (Raspberry Pi or ESP32)
+### 3. Sensor clients (ESP32)
 
 Two independent sensors are supported, each with its own subfolder under
-`pi/`, its own `.env`, and its own `station_name` (so their readings land
-as separate stations rather than colliding on the same row). Both share
-`pi/requirements.txt` for the Python/Pi variant. Each subfolder has two
-equivalent implementations (Python for Raspberry Pi, `.ino` for ESP32); use
-whichever matches your hardware.
+`pi/`, its own config constants, and its own `station_name` (so their
+readings land as separate stations rather than colliding on the same row).
+Each subfolder's `sensor_client.ino` is the deployed ESP32 implementation; a
+Python equivalent also exists for running on a Raspberry Pi instead, sharing
+`pi/requirements.txt`.
 
 **[pi/linovision/](pi/linovision/)** — **Linovision IOT-S300WS8 8-in-1**
 weather sensor (temperature, humidity, pressure, wind, noise, PM2.5/PM10)
@@ -150,7 +151,13 @@ no register gaps or multi-block reads needed. Default Modbus slave ID is
 `1` (factory default, set via the rotary switch/upper address terminal
 under the case cover — not changeable over the wire like the Linovision).
 
-Raspberry Pi setup (either subfolder):
+ESP32 setup (either subfolder): open `sensor_client.ino` in the Arduino IDE
+(install the `ModbusMaster` and `ArduinoJson` libraries, plus the `esp32`
+board package), fill in the Wi-Fi/API constants near the top of the file,
+and flash it. See the file's header comment for wiring notes (UART2 pins,
+RS485 driver-enable pin, NTP time sync).
+
+Raspberry Pi setup (either subfolder, Python variant):
 
 ```bash
 cd pi/linovision   # or pi/thd
@@ -160,12 +167,6 @@ source .venv/bin/activate
 pip install -r ../requirements.txt
 python sensor_client.py
 ```
-
-ESP32 setup: open the subfolder's `sensor_client.ino` in the Arduino IDE
-(install the `ModbusMaster` and `ArduinoJson` libraries, plus the `esp32`
-board package), fill in the Wi-Fi/API constants near the top of the file,
-and flash it. See the file's header comment for wiring notes (UART2 pins,
-optional RS485 driver-enable pin).
 
 If running both sensors from the same Raspberry Pi, use a separate
 USB-to-RS485 adapter/port for each (set via `MODBUS_PORT` in each
@@ -191,7 +192,7 @@ host) — without it, the browser treats API calls as relative paths against
 the frontend's own origin instead of the backend, which fails silently
 with a 404 rather than an obvious connection error.
 
-## Demo (no Raspberry Pi needed)
+## Demo (no hardware needed)
 
 To show the dashboard/chatbot working without real hardware, seed the local
 database with 2 weeks of synthetic readings (temperature, humidity,
@@ -255,6 +256,18 @@ See [backend/scripts/seed_demo_data.py](backend/scripts/seed_demo_data.py).
    (path is relative to `/app` inside the image, i.e. `backend/db/migrations/`
    — the migration uses `CREATE TABLE IF NOT EXISTS`, so it's safe to
    re-run on every deploy.)
+5. Add a third service, **`cleanup-cron`**, deployed from the same repo with
+   **Root Directory** set to `backend` and **Start Command** overridden to:
+   ```
+   python -m scripts.cleanup_old_data
+   ```
+   Set its **Cron Schedule** to run daily (e.g. `0 3 * * *`), and set its
+   `DATABASE_URL` variable the same way as the backend service's (step 3
+   above). This deletes `readings` older than 30 days and `chat_log` rows
+   older than 7 days on every run — see
+   [backend/scripts/cleanup_old_data.py](backend/scripts/cleanup_old_data.py).
+   It's a standalone script with no dependency on `app.config`/`OLLAMA_API_KEY`,
+   so `DATABASE_URL` is the only variable this service needs.
 
 ### Frontend → Vercel
 
@@ -279,10 +292,3 @@ See [backend/scripts/seed_demo_data.py](backend/scripts/seed_demo_data.py).
 | `pi/thd/.env` | `API_URL`, `STATION_NAME`, `SAMPLE_INTERVAL_SECONDS`, `MODBUS_*` | Where/how the THD sensor sends readings |
 | `backend/.env` | `DATABASE_URL`, `OLLAMA_API_KEY`, `CORS_ORIGINS` | DB connection, LLM key, allowed frontend origins |
 | `frontend/.env` | `VITE_API_URL` | Backend base URL for the website |
-
-## Next steps
-
-- Add more chart/history views to the dashboard (e.g. using `recharts`,
-  already included in `frontend/package.json`).
-- Add authentication for the website if it shouldn't be public.
-- Add a scheduled downsampling/retention policy once data volume grows.
